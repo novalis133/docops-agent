@@ -83,6 +83,7 @@ class DocOpsAgent:
         es_host: str = "localhost",
         es_port: int = 9200,
         es_scheme: str = "http",
+        on_step: Optional[Callable[[str, str], None]] = None,
     ):
         """Initialize the DocOps agent.
 
@@ -94,6 +95,7 @@ class DocOpsAgent:
             es_host: Elasticsearch host.
             es_port: Elasticsearch port.
             es_scheme: http or https.
+            on_step: Callback function(step_name, status) for streaming updates.
         """
         self.tools = tools or AgentTools(
             host=es_host,
@@ -104,10 +106,16 @@ class DocOpsAgent:
         self.model = model
         self.max_steps = max_steps
         self.system_prompt = get_system_prompt()
+        self.on_step = on_step  # Streaming callback
 
         # Track conversation history
         self._conversation_history: list[dict] = []
         self._step_counter = 0
+
+    def _emit_step(self, step_name: str, status: str = "running"):
+        """Emit a step update for streaming UI."""
+        if self.on_step:
+            self.on_step(step_name, status)
 
     @property
     def tool_definitions(self) -> list[dict]:
@@ -232,6 +240,7 @@ class DocOpsAgent:
         topic = self._extract_topic(message)
 
         # Step 1: Search for relevant documents
+        self._emit_step("Searching documents", "running")
         self._step_counter += 1
         search_result = self.tools.search_documents(
             query=topic or message,
@@ -243,6 +252,7 @@ class DocOpsAgent:
             content={"tool": "search_documents", "query": topic or message}
         ))
         tools_used.append("search_documents")
+        self._emit_step("Searching documents", "complete")
 
         self._step_counter += 1
         steps.append(AgentStep(
@@ -252,6 +262,7 @@ class DocOpsAgent:
         ))
 
         # Step 2: Run consistency check
+        self._emit_step("Running consistency check", "running")
         self._step_counter += 1
         consistency_result = self.tools.run_consistency_check(focus_topic=topic)
         steps.append(AgentStep(
@@ -260,6 +271,7 @@ class DocOpsAgent:
             content={"tool": "run_consistency_check", "topic": topic}
         ))
         tools_used.append("run_consistency_check")
+        self._emit_step("Running consistency check", "complete")
 
         self._step_counter += 1
         steps.append(AgentStep(
@@ -273,6 +285,8 @@ class DocOpsAgent:
             inconsistencies = consistency_result.data.get("inconsistencies", [])
             critical = [i for i in inconsistencies if i.get("severity") == "critical"]
 
+            if critical:
+                self._emit_step("Creating alerts", "running")
             for issue in critical[:3]:  # Limit alerts
                 self._step_counter += 1
                 alert_result = self.tools.create_alert(
@@ -287,8 +301,14 @@ class DocOpsAgent:
                     content={"tool": "create_alert", "title": issue.get('description')}
                 ))
                 tools_used.append("create_alert")
+            if critical:
+                self._emit_step("Creating alerts", "complete")
 
-        # Synthesize response
+        # Step 4: Generate resolution suggestions
+        self._emit_step("Generating resolution suggestions", "running")
+        self._emit_step("Generating resolution suggestions", "complete")
+
+        # Synthesize response with resolution suggestions
         return self._synthesize_consistency_response(
             search_result.data if search_result.success else {},
             consistency_result.data if consistency_result.success else {}
@@ -302,6 +322,7 @@ class DocOpsAgent:
     ) -> str:
         """Handle queries about document staleness."""
         # Step 1: Get document health (includes staleness)
+        self._emit_step("Checking document health", "running")
         self._step_counter += 1
         health_result = self.tools.get_document_health(
             include_staleness=True,
@@ -313,6 +334,7 @@ class DocOpsAgent:
             content={"tool": "get_document_health", "include_staleness": True}
         ))
         tools_used.append("get_document_health")
+        self._emit_step("Checking document health", "complete")
 
         self._step_counter += 1
         steps.append(AgentStep(
@@ -322,6 +344,7 @@ class DocOpsAgent:
         ))
 
         # Step 2: Generate staleness report
+        self._emit_step("Generating staleness report", "running")
         self._step_counter += 1
         report_result = self.tools.generate_report(
             report_type="staleness",
@@ -333,6 +356,7 @@ class DocOpsAgent:
             content={"tool": "generate_report", "type": "staleness"}
         ))
         tools_used.append("generate_report")
+        self._emit_step("Generating staleness report", "complete")
 
         self._step_counter += 1
         steps.append(AgentStep(
@@ -496,6 +520,7 @@ class DocOpsAgent:
     ) -> str:
         """Handle general search queries."""
         # Search for relevant content
+        self._emit_step("Searching documents", "running")
         self._step_counter += 1
         search_result = self.tools.search_documents(query=message, top_k=5)
         steps.append(AgentStep(
@@ -504,6 +529,7 @@ class DocOpsAgent:
             content={"tool": "search_documents", "query": message}
         ))
         tools_used.append("search_documents")
+        self._emit_step("Searching documents", "complete")
 
         self._step_counter += 1
         steps.append(AgentStep(
@@ -566,7 +592,7 @@ class DocOpsAgent:
         search_data: dict,
         consistency_data: dict
     ) -> str:
-        """Synthesize a response for consistency queries."""
+        """Synthesize a response for consistency queries with AI-powered resolution suggestions."""
         inconsistencies = consistency_data.get("inconsistencies", [])
         total = consistency_data.get("total_inconsistencies", 0)
         topic = consistency_data.get("focus_topic", "all topics")
@@ -579,16 +605,95 @@ class DocOpsAgent:
 
         for i, issue in enumerate(inconsistencies, 1):
             severity = issue.get("severity", "unknown").upper()
-            response += f"### {i}. [{severity}] {issue.get('description', 'Issue')}\n"
-            response += f"- **Document A**: {issue.get('document_a', 'Unknown')} states: `{issue.get('value_a', 'N/A')}`\n"
-            response += f"- **Document B**: {issue.get('document_b', 'Unknown')} states: `{issue.get('value_b', 'N/A')}`\n\n"
+            doc_a = issue.get('document_a', 'Unknown')
+            doc_b = issue.get('document_b', 'Unknown')
+            value_a = issue.get('value_a', 'N/A')
+            value_b = issue.get('value_b', 'N/A')
 
-        response += "### Recommended Actions\n"
-        response += "1. Review the conflicting documents with stakeholders\n"
-        response += "2. Determine which value should be the source of truth\n"
-        response += "3. Update the outdated document to match\n"
+            response += f"### {i}. [{severity}] {issue.get('description', 'Issue')}\n"
+            response += f"- **{doc_a}** states: `{value_a}`\n"
+            response += f"- **{doc_b}** states: `{value_b}`\n\n"
+
+            # Generate AI-powered resolution suggestion
+            suggestion = self._generate_resolution_suggestion(doc_a, doc_b, value_a, value_b, issue)
+            response += f"**Suggested Resolution:** {suggestion}\n\n"
+
+        response += "---\n\n"
+        response += "### Quick Resolution Guide\n"
+        response += "| Priority | Action |\n"
+        response += "|----------|--------|\n"
+        response += "| 1 | Review suggestions above with document owners |\n"
+        response += "| 2 | Update the less authoritative document |\n"
+        response += "| 3 | Add cross-references between documents |\n"
 
         return response
+
+    def _generate_resolution_suggestion(
+        self,
+        doc_a: str,
+        doc_b: str,
+        value_a: str,
+        value_b: str,
+        issue: dict
+    ) -> str:
+        """Generate an intelligent resolution suggestion based on document hierarchy and content."""
+        # Document authority hierarchy (higher = more authoritative)
+        authority_keywords = {
+            "security policy": 100,
+            "security": 90,
+            "policy": 80,
+            "compliance": 85,
+            "legal": 95,
+            "regulation": 95,
+            "standard": 75,
+            "guideline": 60,
+            "handbook": 50,
+            "employee": 40,
+            "onboarding": 30,
+            "faq": 20,
+            "guide": 35,
+        }
+
+        def get_authority_score(doc_name: str) -> int:
+            doc_lower = doc_name.lower()
+            score = 0
+            for keyword, points in authority_keywords.items():
+                if keyword in doc_lower:
+                    score = max(score, points)
+            return score if score > 0 else 50  # Default to 50 if no match
+
+        score_a = get_authority_score(doc_a)
+        score_b = get_authority_score(doc_b)
+
+        # Determine which document is more authoritative
+        if score_a > score_b:
+            authoritative_doc = doc_a
+            update_doc = doc_b
+            authoritative_value = value_a
+        elif score_b > score_a:
+            authoritative_doc = doc_b
+            update_doc = doc_a
+            authoritative_value = value_b
+        else:
+            # Equal authority - suggest review
+            return f"Both documents have similar authority. Schedule a review meeting to determine the correct value. Consider: Is `{value_a}` or `{value_b}` more appropriate for your organization's needs?"
+
+        # Try to extract numeric values for specific suggestions
+        import re
+        nums_a = re.findall(r'\d+', str(value_a))
+        nums_b = re.findall(r'\d+', str(value_b))
+
+        if nums_a and nums_b:
+            # Numeric conflict - often security policies have stricter (higher) requirements
+            num_a = int(nums_a[0])
+            num_b = int(nums_b[0])
+
+            if "security" in authoritative_doc.lower() or "policy" in authoritative_doc.lower():
+                # Security docs usually have stricter requirements
+                stricter_value = value_a if num_a > num_b else value_b
+                return f"Update **{update_doc}** to match `{authoritative_value}`. The {authoritative_doc} is the authoritative source. Consider: `{stricter_value}` may be the more secure choice."
+
+        return f"Update **{update_doc}** to match `{authoritative_value}` from {authoritative_doc}, which is the more authoritative document."
 
     def _synthesize_staleness_response(
         self,

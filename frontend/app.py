@@ -11,13 +11,33 @@ import streamlit as st
 import sys
 import json
 import time
+import re
 from pathlib import Path
 from io import BytesIO
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import settings
+
+# Pre-load embedding model at startup for faster document processing
+@st.cache_resource
+def load_embedding_model():
+    """Pre-load the embedding model once at startup."""
+    try:
+        from src.ingestion.embedder import EmbeddingGenerator
+        generator = EmbeddingGenerator()
+        # Warm up the model with a test embedding
+        generator.embed_text("warmup")
+        return generator
+    except Exception as e:
+        return None
+
+# Load model in background
+_embedding_model = load_embedding_model()
 
 st.set_page_config(
     page_title="DocOps Agent",
@@ -25,6 +45,107 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def render_welcome_screen():
+    """Render an engaging welcome screen for first-time visitors."""
+    st.markdown("""
+    <style>
+    .welcome-header {
+        text-align: center;
+        padding: 2rem 0;
+    }
+    .feature-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+    }
+    .stat-big {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #667eea;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Hero section
+    st.markdown("<h1 style='text-align: center; font-size: 3rem;'>Welcome to DocOps Agent</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #666;'>AI-Powered Document Analysis with Multi-Step Reasoning</p>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Key features
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### :mag: Conflict Detection")
+        st.markdown("Automatically find contradictions between documents. *'Password must be 12 chars'* vs *'14 chars required'*")
+
+    with col2:
+        st.markdown("### :clock3: Staleness Analysis")
+        st.markdown("Identify outdated documents with expired dates or old policy references.")
+
+    with col3:
+        st.markdown("### :bar_chart: Coverage Gaps")
+        st.markdown("Discover topics covered inconsistently across your document corpus.")
+
+    st.divider()
+
+    # How it works
+    st.markdown("### How It Works")
+
+    step_col1, step_col2, step_col3, step_col4 = st.columns(4)
+
+    with step_col1:
+        st.markdown("**Step 1**")
+        st.info(":page_facing_up: **Upload** your policy documents")
+
+    with step_col2:
+        st.markdown("**Step 2**")
+        st.info(":robot_face: **Ask** the AI agent questions")
+
+    with step_col3:
+        st.markdown("**Step 3**")
+        st.info(":eyes: **View** conflicts side-by-side")
+
+    with step_col4:
+        st.markdown("**Step 4**")
+        st.info(":page_with_curl: **Export** reports & resolve issues")
+
+    st.divider()
+
+    # Current corpus stats
+    health = get_health_data()
+
+    st.markdown("### Current Corpus Status")
+
+    stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+
+    with stat_col1:
+        st.metric("Documents Indexed", health.get("document_count", 0), help="Total documents in the system")
+
+    with stat_col2:
+        st.metric("Searchable Chunks", health.get("chunk_count", 0), help="Text segments for semantic search")
+
+    with stat_col3:
+        st.metric("Open Alerts", health.get("open_alerts", 0), help="Issues requiring attention")
+
+    with stat_col4:
+        status = health.get("status", "unknown").title()
+        st.metric("Health Status", status)
+
+    st.divider()
+
+    # Get started button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("Get Started", type="primary", use_container_width=True):
+            st.session_state.welcomed = True
+            st.rerun()
+
+        st.caption("Built for the Elasticsearch Agent Builder Hackathon 2026")
 
 
 def get_health_data():
@@ -46,15 +167,22 @@ def get_health_data():
 
 def main():
     """Main Streamlit application."""
+
+    # Check if first visit - show welcome screen
+    if "welcomed" not in st.session_state:
+        render_welcome_screen()
+        return
+
     st.title("DocOps Agent")
     st.markdown("*Intelligent Document Operations Platform*")
 
     # Sidebar
     with st.sidebar:
         st.header("Navigation")
+        # Ordered to guide user flow: Upload -> Dashboard -> Chat -> View -> Search -> Reports
         page = st.radio(
             "Select Page",
-            ["Dashboard", "Agent Chat", "Conflict Viewer", "Reports", "Search", "Upload"],
+            ["Upload", "Dashboard", "Agent Chat", "Conflict Viewer", "Search", "Reports"],
             label_visibility="collapsed",
         )
 
@@ -83,19 +211,19 @@ def main():
         if health.get("critical_alerts", 0) > 0:
             st.error(f":warning: {health['critical_alerts']} critical alerts!")
 
-    # Main content
-    if page == "Dashboard":
+    # Main content - ordered to match sidebar flow
+    if page == "Upload":
+        render_upload()
+    elif page == "Dashboard":
         render_dashboard()
     elif page == "Agent Chat":
         render_agent_chat()
     elif page == "Conflict Viewer":
         render_conflict_viewer()
-    elif page == "Reports":
-        render_reports()
     elif page == "Search":
         render_search()
-    elif page == "Upload":
-        render_upload()
+    elif page == "Reports":
+        render_reports()
 
 
 def render_dashboard():
@@ -137,8 +265,8 @@ def render_dashboard():
 
     st.divider()
 
-    # Health score visualization
-    col1, col2 = st.columns([2, 1])
+    # Health score and visualizations
+    col1, col2, col3 = st.columns([1.5, 1.5, 1])
 
     with col1:
         st.subheader("Health Score")
@@ -158,19 +286,32 @@ def render_dashboard():
                 else:
                     st.progress(score / 100, text=f"Score: {score}/100 - Critical")
 
-                # Issue breakdown
-                st.markdown("**Issue Breakdown:**")
-                issues = []
-                if health_result.data.get("total_conflicts", 0) > 0:
-                    issues.append(f"- :warning: {health_result.data['total_conflicts']} conflicts")
-                if health_result.data.get("staleness_issues", 0) > 0:
-                    issues.append(f"- :clock3: {health_result.data['staleness_issues']} staleness issues")
-                if health_result.data.get("coverage_gaps", 0) > 0:
-                    issues.append(f"- :hole: {health_result.data['coverage_gaps']} coverage gaps")
+                # Issue breakdown data for pie chart
+                conflicts = health_result.data.get("total_conflicts", 0)
+                staleness = health_result.data.get("staleness_issues", 0)
+                gaps = health_result.data.get("coverage_gaps", 0)
 
-                if issues:
-                    for issue in issues:
-                        st.markdown(issue)
+                if conflicts > 0 or staleness > 0 or gaps > 0:
+                    # Pie chart for issues
+                    issue_data = {
+                        "Issue Type": ["Conflicts", "Staleness", "Coverage Gaps"],
+                        "Count": [conflicts, staleness, gaps]
+                    }
+                    fig = px.pie(
+                        issue_data,
+                        values="Count",
+                        names="Issue Type",
+                        title="Issue Breakdown",
+                        color_discrete_sequence=["#FF6B6B", "#FFE66D", "#4ECDC4"],
+                        hole=0.4
+                    )
+                    fig.update_layout(
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        height=280,
+                        showlegend=True,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.2)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.success("No issues detected!")
 
@@ -179,6 +320,46 @@ def render_dashboard():
             st.caption(str(e)[:100])
 
     with col2:
+        st.subheader("Alert Severity")
+        try:
+            from src.main import create_indexer
+            indexer = create_indexer()
+            alerts = indexer.get_alerts(top_k=100)
+
+            if alerts:
+                # Count by severity
+                severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+                for alert in alerts:
+                    sev = alert.get("severity", "low").lower()
+                    if sev in severity_counts:
+                        severity_counts[sev] += 1
+
+                # Bar chart for severity
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=list(severity_counts.keys()),
+                        y=list(severity_counts.values()),
+                        marker_color=["#DC3545", "#FD7E14", "#FFC107", "#28A745"],
+                        text=list(severity_counts.values()),
+                        textposition="auto"
+                    )
+                ])
+                fig.update_layout(
+                    title="Alerts by Severity",
+                    xaxis_title="Severity",
+                    yaxis_title="Count",
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    height=280,
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.success("No open alerts!")
+
+        except Exception as e:
+            st.info("Alert chart unavailable")
+
+    with col3:
         st.subheader("Quick Actions")
         if st.button("Run Conflict Scan", use_container_width=True):
             st.session_state["quick_action"] = "conflict_scan"
@@ -209,6 +390,116 @@ def render_dashboard():
 
             except Exception as e:
                 st.error(f"Action failed: {e}")
+
+    st.divider()
+
+    # Elasticsearch Aggregations Section
+    st.subheader("Document Analytics (Elasticsearch Aggregations)")
+
+    try:
+        from src.main import create_indexer
+        indexer = create_indexer()
+        aggs = indexer.get_aggregations()
+
+        agg_col1, agg_col2 = st.columns(2)
+
+        with agg_col1:
+            # Top Sections/Topics Bar Chart
+            if aggs.get("top_sections"):
+                sections_data = aggs["top_sections"][:10]
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=[s["count"] for s in sections_data],
+                        y=[s["name"][:30] for s in sections_data],
+                        orientation='h',
+                        marker_color='#4ECDC4',
+                        text=[s["count"] for s in sections_data],
+                        textposition="auto"
+                    )
+                ])
+                fig.update_layout(
+                    title="Top Document Sections",
+                    xaxis_title="Chunk Count",
+                    yaxis_title="",
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    height=300,
+                    yaxis=dict(autorange="reversed")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        with agg_col2:
+            # Documents by Chunks Treemap
+            if aggs.get("documents"):
+                docs_data = aggs["documents"]
+                fig = px.treemap(
+                    names=[d["name"][:25] for d in docs_data],
+                    parents=["" for _ in docs_data],
+                    values=[d["chunks"] for d in docs_data],
+                    title="Documents by Content Size",
+                    color=[d["chunks"] for d in docs_data],
+                    color_continuous_scale="Blues"
+                )
+                fig.update_layout(
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    height=300
+                )
+                fig.update_traces(textinfo="label+value")
+                st.plotly_chart(fig, use_container_width=True)
+
+        # Second row of aggregations
+        agg_col3, agg_col4, agg_col5 = st.columns(3)
+
+        with agg_col3:
+            # File Types Pie Chart
+            if aggs.get("file_types"):
+                types_data = aggs["file_types"]
+                fig = px.pie(
+                    values=[t["count"] for t in types_data],
+                    names=[t["type"].upper() for t in types_data],
+                    title="Documents by Type",
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    height=250,
+                    showlegend=True
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        with agg_col4:
+            # Section Levels Distribution
+            if aggs.get("section_levels"):
+                levels_data = aggs["section_levels"]
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=[f"Level {l['level']}" for l in levels_data],
+                        y=[l["count"] for l in levels_data],
+                        marker_color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'][:len(levels_data)],
+                        text=[l["count"] for l in levels_data],
+                        textposition="auto"
+                    )
+                ])
+                fig.update_layout(
+                    title="Content Depth",
+                    xaxis_title="Heading Level",
+                    yaxis_title="Sections",
+                    margin=dict(l=20, r=20, t=40, b=20),
+                    height=250
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        with agg_col5:
+            # Content Stats
+            if aggs.get("content_stats"):
+                stats = aggs["content_stats"]
+                st.markdown("**Content Statistics**")
+                st.metric("Avg Chunk Size", f"{stats.get('avg_length', 0):,} chars")
+                st.metric("Total Content", f"{stats.get('total_chars', 0):,} chars")
+                st.caption(f"Range: {stats.get('min_length', 0):,} - {stats.get('max_length', 0):,} chars")
+
+    except Exception as e:
+        st.info("Aggregation analytics unavailable")
+        st.caption(str(e)[:100])
 
     st.divider()
 
@@ -252,10 +543,35 @@ def render_agent_chat():
     if "agent_steps" not in st.session_state:
         st.session_state.agent_steps = []
 
-    # Chat interface
-    col1, col2 = st.columns([2, 1])
+    # Sidebar-style quick queries on the right
+    with st.sidebar:
+        st.divider()
+        st.subheader("Quick Queries")
 
-    with col1:
+        quick_queries = [
+            "What is the password policy?",
+            "Check for conflicts about passwords",
+            "Are any documents expired?",
+            "What coverage gaps exist?",
+            "Give me a health summary"
+        ]
+
+        for query in quick_queries:
+            if st.button(query, key=f"quick_{query[:20]}", use_container_width=True):
+                st.session_state.messages.append({"role": "user", "content": query})
+                st.rerun()
+
+        st.divider()
+
+        if st.button("Clear Chat History", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.agent_steps = []
+            st.rerun()
+
+    # Chat messages container
+    chat_container = st.container()
+
+    with chat_container:
         # Display chat messages
         for i, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
@@ -273,101 +589,108 @@ def render_agent_chat():
                                 elif step_type == "tool_result":
                                     st.markdown(f":white_check_mark: **Result**: {json.dumps(step.get('content', {}), indent=2)[:200]}...")
 
-        # Chat input
-        if prompt := st.chat_input("Ask about your documents..."):
-            # Add user message
-            st.session_state.messages.append({"role": "user", "content": prompt})
+    # Chat input - always at the bottom (outside any container/column)
+    if prompt := st.chat_input("Ask about your documents..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
 
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-            # Generate response
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        from src.agent import DocOpsAgent
-                        agent = DocOpsAgent()
-                        response = agent.chat(prompt)
+        # Generate response with streaming status
+        with st.chat_message("assistant"):
+            # Create a status container for streaming updates
+            status_container = st.status("Thinking...", expanded=True)
+            step_updates = []
 
-                        # Display response
-                        st.markdown(response.answer)
+            def on_step_callback(step_name: str, status: str):
+                """Callback for streaming step updates."""
+                if status == "running":
+                    step_updates.append({"name": step_name, "status": "running"})
+                    status_container.update(label=f"Agent: {step_name}...")
+                    status_container.write(f":hourglass_flowing_sand: {step_name}...")
+                elif status == "complete":
+                    status_container.write(f":white_check_mark: {step_name}")
 
-                        # Store steps
-                        steps_data = [s.to_dict() for s in response.steps]
-                        st.session_state.agent_steps.append(steps_data)
+            try:
+                from src.agent import DocOpsAgent
+                agent = DocOpsAgent(on_step=on_step_callback)
+                response = agent.chat(prompt)
 
-                        # Show step trace
-                        if response.steps:
-                            with st.expander("View Agent Steps", expanded=True):
-                                st.markdown(f"**Tools Used:** {', '.join(response.tools_used)}")
-                                st.markdown(f"**Total Steps:** {response.total_steps}")
+                # Update status to complete
+                status_container.update(label="Analysis Complete", state="complete", expanded=False)
 
-                                for step in response.steps:
-                                    step_dict = step.to_dict()
-                                    step_type = step_dict.get("step_type")
+                # Display response
+                st.markdown(response.answer)
 
-                                    if step_type == "user_message":
-                                        st.markdown(f":speech_balloon: **Input**: {step_dict.get('content', '')[:100]}...")
-                                    elif step_type == "tool_call":
-                                        content = step_dict.get("content", {})
-                                        st.markdown(f":wrench: **Tool**: `{content.get('tool', 'unknown')}`")
-                                        if content.get("query"):
-                                            st.caption(f"Query: {content['query']}")
-                                    elif step_type == "tool_result":
-                                        st.markdown(":white_check_mark: **Result received**")
+                # Store steps
+                steps_data = [s.to_dict() for s in response.steps]
+                st.session_state.agent_steps.append(steps_data)
 
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": response.answer
-                        })
+                # Show step trace
+                if response.steps:
+                    with st.expander("View Agent Steps", expanded=False):
+                        st.markdown(f"**Tools Used:** {', '.join(response.tools_used)}")
+                        st.markdown(f"**Total Steps:** {response.total_steps}")
 
-                    except Exception as e:
-                        error_msg = f"Error: {str(e)}"
-                        st.error(error_msg)
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": error_msg
-                        })
-                        st.session_state.agent_steps.append([])
+                        for step in response.steps:
+                            step_dict = step.to_dict()
+                            step_type = step_dict.get("step_type")
 
-    with col2:
-        st.subheader("Quick Queries")
+                            if step_type == "user_message":
+                                st.markdown(f":speech_balloon: **Input**: {step_dict.get('content', '')[:100]}...")
+                            elif step_type == "tool_call":
+                                content = step_dict.get("content", {})
+                                st.markdown(f":wrench: **Tool**: `{content.get('tool', 'unknown')}`")
+                                if content.get("query"):
+                                    st.caption(f"Query: {content['query']}")
+                            elif step_type == "tool_result":
+                                st.markdown(":white_check_mark: **Result received**")
 
-        quick_queries = [
-            "What is the password policy?",
-            "Check for conflicts about passwords",
-            "Are any documents expired?",
-            "What coverage gaps exist?",
-            "Give me a health summary"
-        ]
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.answer
+                })
 
-        for query in quick_queries:
-            if st.button(query, key=f"quick_{query[:20]}", use_container_width=True):
-                # Trigger the chat input programmatically
-                st.session_state.messages.append({"role": "user", "content": query})
-                st.rerun()
+            except Exception as e:
+                status_container.update(label="Error", state="error")
+                error_msg = f"Error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+                st.session_state.agent_steps.append([])
 
-        st.divider()
-
-        if st.button("Clear Chat History", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.agent_steps = []
-            st.rerun()
+        # Rerun to update the display and keep input at bottom
+        st.rerun()
 
 
 def render_conflict_viewer():
-    """Render the conflict viewer with side-by-side comparison."""
+    """Render the conflict viewer with enhanced visualization."""
     st.header("Conflict Viewer")
-    st.info("View document conflicts side-by-side to understand discrepancies.")
+    st.markdown("Analyze document conflicts with **side-by-side comparison** and **visual diff**")
 
     try:
         from src.analysis import ConflictDetector
 
-        # Topic filter
-        topic = st.selectbox(
-            "Filter by Topic",
-            ["All Topics", "password", "security", "remote", "data", "expense"]
-        )
+        # Filters row
+        filter_col1, filter_col2, filter_col3 = st.columns([2, 2, 1])
+
+        with filter_col1:
+            topic = st.selectbox(
+                "Filter by Topic",
+                ["All Topics", "password", "security", "remote", "data", "expense"],
+                help="Focus on specific policy areas"
+            )
+
+        with filter_col2:
+            severity_filter = st.multiselect(
+                "Severity",
+                ["critical", "high", "medium", "low"],
+                default=["critical", "high"],
+                help="Filter by severity level"
+            )
 
         with st.spinner("Detecting conflicts..."):
             detector = ConflictDetector()
@@ -377,66 +700,151 @@ def render_conflict_viewer():
             else:
                 conflicts = detector.detect_conflicts(topic=topic)
 
+            # Apply severity filter
+            if severity_filter:
+                conflicts = [c for c in conflicts if c.severity.value in severity_filter]
+
         if not conflicts:
-            st.success("No conflicts found!")
+            st.success(":white_check_mark: No conflicts found! Your documents are consistent.")
             return
 
-        st.subheader(f"Found {len(conflicts)} Conflicts")
+        # Summary stats
+        st.divider()
+        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+
+        critical_count = len([c for c in conflicts if c.severity.value == "critical"])
+        high_count = len([c for c in conflicts if c.severity.value == "high"])
+        medium_count = len([c for c in conflicts if c.severity.value == "medium"])
+        low_count = len([c for c in conflicts if c.severity.value == "low"])
+
+        with stat_col1:
+            st.metric(":red_circle: Critical", critical_count)
+        with stat_col2:
+            st.metric(":large_orange_circle: High", high_count)
+        with stat_col3:
+            st.metric(":yellow_circle: Medium", medium_count)
+        with stat_col4:
+            st.metric(":green_circle: Low", low_count)
+
+        # Export button
+        with filter_col3:
+            if conflicts:
+                export_data = []
+                for c in conflicts:
+                    export_data.append({
+                        "Severity": c.severity.value.upper(),
+                        "Topic": c.topic,
+                        "Description": c.description,
+                        "Document A": c.location_a.document_title,
+                        "Value A": c.value_a,
+                        "Document B": c.location_b.document_title,
+                        "Value B": c.value_b
+                    })
+                df = pd.DataFrame(export_data)
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Conflicts')
+                buffer.seek(0)
+                st.download_button(
+                    ":arrow_down: Export",
+                    data=buffer,
+                    file_name="conflicts_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        st.divider()
+        st.subheader(f"Conflict Details ({len(conflicts)} found)")
 
         for i, conflict in enumerate(conflicts):
-            severity_colors = {
-                "critical": "red",
-                "high": "orange",
-                "medium": "yellow",
-                "low": "green"
+            severity_styles = {
+                "critical": {"bg": "#DC3545", "text": "white", "icon": ":red_circle:"},
+                "high": {"bg": "#FD7E14", "text": "white", "icon": ":large_orange_circle:"},
+                "medium": {"bg": "#FFC107", "text": "black", "icon": ":yellow_circle:"},
+                "low": {"bg": "#28A745", "text": "white", "icon": ":green_circle:"}
             }
-            color = severity_colors.get(conflict.severity.value, "gray")
+            style = severity_styles.get(conflict.severity.value, severity_styles["medium"])
 
             with st.expander(
-                f":{'red' if color == 'red' else 'large_orange' if color == 'orange' else 'yellow' if color == 'yellow' else 'green'}_circle: "
-                f"**{conflict.description}** ({conflict.severity.value.upper()})",
-                expanded=(i == 0)
+                f"{style['icon']} **{conflict.description}**",
+                expanded=(i < 2)  # Expand first 2
             ):
-                st.markdown(f"**Topic:** {conflict.topic}")
-                st.markdown(f"**Type:** {conflict.conflict_type.value}")
+                # Conflict header with severity badge
+                st.markdown(f"""
+                <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+                    <span style="background-color: {style['bg']}; color: {style['text']}; padding: 4px 12px; border-radius: 20px; font-weight: bold; font-size: 0.8rem;">
+                        {conflict.severity.value.upper()}
+                    </span>
+                    <span style="background-color: #e9ecef; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                        Topic: {conflict.topic}
+                    </span>
+                    <span style="background-color: #e9ecef; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                        {conflict.conflict_type.value}
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
 
-                # Side-by-side comparison
-                col1, col2 = st.columns(2)
+                # Visual diff - side by side cards
+                col1, vs_col, col2 = st.columns([5, 1, 5])
 
                 with col1:
-                    st.markdown(f"#### {conflict.location_a.document_title}")
-                    st.markdown(f"*Section: {conflict.location_a.section_title}*")
-
-                    # Highlight the conflicting value
                     st.markdown(f"""
-                    <div style="background-color: #ffcccc; padding: 10px; border-radius: 5px;">
-                    <strong>Value:</strong> {conflict.value_a}
+                    <div style="background: linear-gradient(135deg, #ff6b6b22 0%, #ff848422 100%);
+                                padding: 1.5rem; border-radius: 10px; border-left: 4px solid #DC3545;">
+                        <div style="font-weight: bold; color: #DC3545; margin-bottom: 0.5rem;">
+                            :page_facing_up: {conflict.location_a.document_title}
+                        </div>
+                        <div style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
+                            Section: {conflict.location_a.section_title}
+                        </div>
+                        <div style="background: white; padding: 1rem; border-radius: 5px; font-size: 1.5rem; font-weight: bold; text-align: center;">
+                            {conflict.value_a}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
 
-                    if conflict.location_a.content:
-                        with st.expander("View Context"):
-                            st.text(conflict.location_a.content[:500])
+                with vs_col:
+                    st.markdown("""
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; font-size: 1.5rem; font-weight: bold; color: #666;">
+                        VS
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 with col2:
-                    st.markdown(f"#### {conflict.location_b.document_title}")
-                    st.markdown(f"*Section: {conflict.location_b.section_title}*")
-
                     st.markdown(f"""
-                    <div style="background-color: #ccccff; padding: 10px; border-radius: 5px;">
-                    <strong>Value:</strong> {conflict.value_b}
+                    <div style="background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
+                                padding: 1.5rem; border-radius: 10px; border-left: 4px solid #667eea;">
+                        <div style="font-weight: bold; color: #667eea; margin-bottom: 0.5rem;">
+                            :page_facing_up: {conflict.location_b.document_title}
+                        </div>
+                        <div style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
+                            Section: {conflict.location_b.section_title}
+                        </div>
+                        <div style="background: white; padding: 1rem; border-radius: 5px; font-size: 1.5rem; font-weight: bold; text-align: center;">
+                            {conflict.value_b}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
 
+                # Context expanders
+                st.markdown("<br>", unsafe_allow_html=True)
+                ctx_col1, ctx_col2 = st.columns(2)
+
+                with ctx_col1:
+                    if conflict.location_a.content:
+                        with st.expander(":mag: View Full Context (Doc A)"):
+                            st.text(conflict.location_a.content[:500])
+
+                with ctx_col2:
                     if conflict.location_b.content:
-                        with st.expander("View Context"):
+                        with st.expander(":mag: View Full Context (Doc B)"):
                             st.text(conflict.location_b.content[:500])
 
                 # Action buttons
                 st.divider()
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button("Create Alert", key=f"alert_{conflict.id}"):
+                btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+                with btn_col1:
+                    if st.button(":bell: Create Alert", key=f"alert_{conflict.id}", use_container_width=True):
                         try:
                             from src.actions import AlertManager
                             manager = AlertManager()
@@ -448,11 +856,17 @@ def render_conflict_viewer():
                                 description=f"{conflict.value_a} vs {conflict.value_b}"
                             )
                             if alert_id:
-                                st.success(f"Alert created: {alert_id}")
+                                st.success(f"Alert created!")
                             else:
-                                st.info("Alert already exists (deduplicated)")
+                                st.info("Alert already exists")
                         except Exception as e:
-                            st.error(f"Failed to create alert: {e}")
+                            st.error(f"Failed: {e}")
+
+                with btn_col2:
+                    st.button(":white_check_mark: Mark Resolved", key=f"resolve_{conflict.id}", use_container_width=True, disabled=True)
+
+                with btn_col3:
+                    st.button(":link: View Documents", key=f"view_{conflict.id}", use_container_width=True, disabled=True)
 
     except Exception as e:
         st.error(f"Unable to load conflict detector: {e}")
@@ -547,16 +961,35 @@ def render_reports():
                 st.info("Make sure Elasticsearch is running and documents are indexed.")
 
 
+def highlight_text(text: str, query: str) -> str:
+    """Highlight search terms in text with HTML markup."""
+    if not query:
+        return text
+    # Split query into words and escape for regex
+    words = query.lower().split()
+    highlighted = text
+    for word in words:
+        if len(word) > 2:  # Only highlight words > 2 chars
+            pattern = re.compile(re.escape(word), re.IGNORECASE)
+            highlighted = pattern.sub(
+                lambda m: f"<mark style='background-color: #FFEB3B; padding: 0 2px; border-radius: 2px;'>{m.group()}</mark>",
+                highlighted
+            )
+    return highlighted
+
+
 def render_search():
-    """Render the search page."""
+    """Render the search page with highlighting and export."""
     st.header("Document Search")
+    st.markdown("Search across all indexed documents using **hybrid search** (BM25 + semantic vectors)")
 
-    query = st.text_input("Search query", placeholder="Enter your search...")
+    query = st.text_input("Search query", placeholder="Enter your search... (e.g., 'password policy')")
 
-    col1, col2 = st.columns([1, 3])
+    col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
-        use_hybrid = st.checkbox("Use hybrid search", value=True)
-        top_k = st.slider("Results", 1, 20, 10)
+        use_hybrid = st.checkbox("Use hybrid search", value=True, help="Combines keyword + semantic matching")
+    with col2:
+        top_k = st.slider("Max results", 1, 20, 10)
 
     if query:
         with st.spinner("Searching..."):
@@ -565,66 +998,215 @@ def render_search():
 
                 results = search(query, top_k=top_k, use_hybrid=use_hybrid)
 
-                st.subheader(f"Results ({len(results)})")
+                # Results header with export button
+                header_col1, header_col2 = st.columns([3, 1])
+                with header_col1:
+                    st.subheader(f"Found {len(results)} Results")
+                with header_col2:
+                    if results:
+                        # Prepare export data
+                        export_data = []
+                        for r in results:
+                            export_data.append({
+                                "Document": r.get("document_title", ""),
+                                "Section": r.get("section_title", ""),
+                                "Score": round(r.get("score", 0), 4),
+                                "Content": r.get("content", "")[:500]
+                            })
+                        df = pd.DataFrame(export_data)
 
+                        # Excel export
+                        buffer = BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Search Results')
+                        buffer.seek(0)
+
+                        st.download_button(
+                            ":arrow_down: Export Excel",
+                            data=buffer,
+                            file_name=f"search_results_{query[:20]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+
+                # Display results with highlighting
                 for i, result in enumerate(results, 1):
                     score = result.get("score", 0)
-                    with st.expander(
-                        f"{i}. {result.get('section_title', 'Result')} "
-                        f"(Score: {score:.3f})"
-                    ):
-                        st.markdown(f"**Document:** {result.get('document_title', 'Unknown')}")
-                        st.markdown(f"**Section:** {result.get('section_title', 'Unknown')}")
-                        st.text(result.get("content", "")[:500] + "...")
+                    doc_title = result.get('document_title', 'Unknown')
+                    section_title = result.get('section_title', 'Result')
+
+                    # Color-coded score badge
+                    if score > 0.8:
+                        score_color = "green"
+                    elif score > 0.5:
+                        score_color = "orange"
+                    else:
+                        score_color = "gray"
+
+                    with st.expander(f"{i}. **{section_title}** - {doc_title}", expanded=(i <= 3)):
+                        # Score badge
+                        st.markdown(f"""
+                        <span style="background-color: {score_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">
+                            Score: {score:.3f}
+                        </span>
+                        """, unsafe_allow_html=True)
+
+                        st.markdown(f"**Document:** {doc_title}")
+                        st.markdown(f"**Section:** {section_title}")
+
+                        # Highlighted content
+                        content = result.get("content", "")[:500]
+                        highlighted_content = highlight_text(content, query)
+                        st.markdown(f"""
+                        <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 5px; border-left: 3px solid #667eea;">
+                            {highlighted_content}...
+                        </div>
+                        """, unsafe_allow_html=True)
 
             except Exception as e:
                 st.error(f"Search failed: {e}")
 
 
 def render_upload():
-    """Render the upload page."""
+    """Render the upload page with enhanced multi-file support."""
     st.header("Upload Documents")
+    st.info("Upload your policy documents, handbooks, and guidelines. DocOps will analyze them for conflicts, staleness, and coverage gaps.")
 
-    uploaded_files = st.file_uploader(
-        "Choose files to upload",
-        type=["pdf", "docx", "md", "txt"],
-        accept_multiple_files=True,
-    )
+    # Two columns: Upload and Sample Documents
+    col1, col2 = st.columns([2, 1])
 
-    if uploaded_files:
-        if st.button("Ingest Documents", type="primary"):
-            progress = st.progress(0)
-            status = st.empty()
+    with col1:
+        st.subheader("Upload Files")
 
-            for i, uploaded_file in enumerate(uploaded_files):
-                status.text(f"Processing: {uploaded_file.name}")
+        uploaded_files = st.file_uploader(
+            "Drag and drop files here or click to browse",
+            type=["pdf", "docx", "md", "txt"],
+            accept_multiple_files=True,
+            help="Supported formats: PDF, Word (.docx), Markdown (.md), Text (.txt)"
+        )
 
-                try:
-                    import tempfile
-                    from src.main import ingest_document
+        if uploaded_files:
+            # Show file summary before ingesting
+            st.markdown(f"**{len(uploaded_files)} file(s) selected:**")
 
-                    # Save to temp file
-                    suffix = Path(uploaded_file.name).suffix
-                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                        tmp.write(uploaded_file.getvalue())
-                        tmp_path = tmp.name
+            file_summary = []
+            total_size = 0
+            for f in uploaded_files:
+                size_kb = len(f.getvalue()) / 1024
+                total_size += size_kb
+                file_summary.append({
+                    "File": f.name,
+                    "Type": Path(f.name).suffix.upper(),
+                    "Size": f"{size_kb:.1f} KB"
+                })
 
-                    # Ingest
-                    result = ingest_document(tmp_path)
-                    st.success(
-                        f"Ingested: {uploaded_file.name} "
-                        f"({result['chunk_count']} chunks)"
-                    )
+            # Display as table
+            import pandas as pd
+            df = pd.DataFrame(file_summary)
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
-                    # Clean up
-                    Path(tmp_path).unlink(missing_ok=True)
+            st.caption(f"Total size: {total_size:.1f} KB")
 
-                except Exception as e:
-                    st.error(f"Failed to ingest {uploaded_file.name}: {e}")
+            if st.button("Ingest All Documents", type="primary", use_container_width=True):
+                # Track results for summary
+                results = {"success": [], "failed": []}
 
-                progress.progress((i + 1) / len(uploaded_files))
+                progress = st.progress(0)
+                status_container = st.status("Processing documents...", expanded=True)
 
-            status.text("Processing complete!")
+                for i, uploaded_file in enumerate(uploaded_files):
+                    status_container.write(f":hourglass_flowing_sand: Processing: {uploaded_file.name}")
+
+                    try:
+                        import tempfile
+                        from src.main import ingest_document
+
+                        # Save to temp file
+                        suffix = Path(uploaded_file.name).suffix
+                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                            tmp.write(uploaded_file.getvalue())
+                            tmp_path = tmp.name
+
+                        # Ingest
+                        result = ingest_document(tmp_path)
+                        results["success"].append({
+                            "name": uploaded_file.name,
+                            "chunks": result['chunk_count']
+                        })
+                        status_container.write(f":white_check_mark: {uploaded_file.name} ({result['chunk_count']} chunks)")
+
+                        # Clean up
+                        Path(tmp_path).unlink(missing_ok=True)
+
+                    except Exception as e:
+                        results["failed"].append({
+                            "name": uploaded_file.name,
+                            "error": str(e)
+                        })
+                        status_container.write(f":x: {uploaded_file.name} - Error: {str(e)[:50]}")
+
+                    progress.progress((i + 1) / len(uploaded_files))
+
+                # Final summary
+                status_container.update(label="Processing Complete", state="complete")
+
+                st.divider()
+                st.subheader("Upload Summary")
+
+                sum_col1, sum_col2 = st.columns(2)
+                with sum_col1:
+                    st.metric("Successfully Ingested", len(results["success"]))
+                with sum_col2:
+                    st.metric("Failed", len(results["failed"]))
+
+                if results["success"]:
+                    total_chunks = sum(r["chunks"] for r in results["success"])
+                    st.success(f"Created {total_chunks} searchable chunks from {len(results['success'])} documents")
+
+                if results["failed"]:
+                    with st.expander("View Errors"):
+                        for f in results["failed"]:
+                            st.error(f"{f['name']}: {f['error']}")
+
+    with col2:
+        st.subheader("Quick Start")
+        st.markdown("Load sample documents to see DocOps in action:")
+
+        # Load demo documents
+        demo_docs_path = Path(__file__).parent.parent / "demo_docs"
+
+        if demo_docs_path.exists():
+            demo_files = list(demo_docs_path.glob("*.md")) + list(demo_docs_path.glob("*.txt"))
+
+            if demo_files:
+                st.caption(f"Found {len(demo_files)} sample documents")
+
+                if st.button("Load All Demo Documents", use_container_width=True):
+                    with st.spinner("Loading demo documents..."):
+                        loaded = 0
+                        for demo_file in demo_files:
+                            try:
+                                from src.main import ingest_document
+                                ingest_document(str(demo_file))
+                                loaded += 1
+                            except Exception as e:
+                                st.warning(f"Skipped {demo_file.name}: {str(e)[:30]}")
+
+                        if loaded > 0:
+                            st.success(f"Loaded {loaded} demo documents!")
+                            st.balloons()
+            else:
+                st.caption("No demo documents found")
+        else:
+            st.caption("Demo folder not found")
+
+        st.divider()
+        st.markdown("**Supported Formats:**")
+        st.markdown("""
+        - :page_facing_up: **PDF** - Policy documents
+        - :blue_book: **DOCX** - Word documents
+        - :memo: **Markdown** - .md files
+        - :page_with_curl: **Text** - Plain text
+        """)
 
 
 if __name__ == "__main__":

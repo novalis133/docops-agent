@@ -11,6 +11,9 @@ from .chunker import Chunk
 
 logger = logging.getLogger(__name__)
 
+# Global model cache for faster subsequent loads
+_MODEL_CACHE: dict = {}
+
 
 @dataclass
 class EmbeddedChunk:
@@ -53,28 +56,34 @@ class EmbeddingProvider(ABC):
 
 
 class SentenceTransformerProvider(EmbeddingProvider):
-    """Embedding provider using sentence-transformers."""
+    """Embedding provider using sentence-transformers with global caching."""
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         self._model_name = model_name
-        self._model: Optional[object] = None
         self._dimension: Optional[int] = None
 
-    def _load_model(self) -> None:
-        """Lazy load the model."""
-        if self._model is None:
+    def _load_model(self) -> object:
+        """Lazy load the model with global caching for speed."""
+        global _MODEL_CACHE
+
+        if self._model_name not in _MODEL_CACHE:
             from sentence_transformers import SentenceTransformer
 
-            logger.info(f"Loading sentence-transformer model: {self._model_name}")
-            self._model = SentenceTransformer(self._model_name)
+            logger.info(f"Loading sentence-transformer model: {self._model_name} (first time, will be cached)")
+            _MODEL_CACHE[self._model_name] = SentenceTransformer(self._model_name)
             # Get dimension from a test embedding
-            test_embedding = self._model.encode(["test"])[0]
-            self._dimension = len(test_embedding)
+            test_embedding = _MODEL_CACHE[self._model_name].encode(["test"])[0]
+            _MODEL_CACHE[f"{self._model_name}_dim"] = len(test_embedding)
+        else:
+            logger.debug(f"Using cached model: {self._model_name}")
+
+        self._dimension = _MODEL_CACHE.get(f"{self._model_name}_dim", 384)
+        return _MODEL_CACHE[self._model_name]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for a list of texts."""
-        self._load_model()
-        embeddings = self._model.encode(texts, show_progress_bar=False)
+        model = self._load_model()
+        embeddings = model.encode(texts, show_progress_bar=False)
         return embeddings.tolist()
 
     def embed_single(self, text: str) -> list[float]:

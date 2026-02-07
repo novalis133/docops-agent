@@ -450,3 +450,143 @@ class ElasticsearchIndexer:
 
         content = f"{document.filename}:{document.title}"
         return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def get_aggregations(self) -> dict:
+        """Get comprehensive aggregations for dashboard visualizations.
+
+        Returns aggregation data for:
+        - Top terms/topics in documents
+        - Document distribution by section count
+        - Content length statistics
+        - Section titles frequency
+        """
+        try:
+            # Aggregations on chunks index for richer data
+            chunk_aggs = self.es.search(
+                index=self.chunks_index,
+                size=0,
+                aggs={
+                    # Top terms from section titles (topics)
+                    "top_sections": {
+                        "terms": {
+                            "field": "section_title.keyword",
+                            "size": 15
+                        }
+                    },
+                    # Documents by title
+                    "documents": {
+                        "terms": {
+                            "field": "document_title.keyword",
+                            "size": 20
+                        }
+                    },
+                    # Content length stats
+                    "content_length_stats": {
+                        "stats": {
+                            "field": "char_count"
+                        }
+                    },
+                    # Chunks per document
+                    "chunks_per_doc": {
+                        "terms": {
+                            "field": "document_id.keyword",
+                            "size": 20
+                        }
+                    },
+                    # Section level distribution
+                    "section_levels": {
+                        "terms": {
+                            "field": "section_level",
+                            "size": 10
+                        }
+                    }
+                }
+            )
+
+            # Get document-level aggregations
+            doc_aggs = self.es.search(
+                index=self.documents_index,
+                size=0,
+                aggs={
+                    # Documents by file type
+                    "by_file_type": {
+                        "terms": {
+                            "field": "file_type.keyword",
+                            "size": 10
+                        }
+                    },
+                    # Section count distribution
+                    "section_count_stats": {
+                        "stats": {
+                            "field": "section_count"
+                        }
+                    },
+                    # Section count histogram
+                    "section_count_ranges": {
+                        "range": {
+                            "field": "section_count",
+                            "ranges": [
+                                {"key": "1-5 sections", "from": 1, "to": 6},
+                                {"key": "6-10 sections", "from": 6, "to": 11},
+                                {"key": "11-20 sections", "from": 11, "to": 21},
+                                {"key": "21+ sections", "from": 21}
+                            ]
+                        }
+                    }
+                }
+            )
+
+            # Process chunk aggregations
+            top_sections = [
+                {"name": b["key"], "count": b["doc_count"]}
+                for b in chunk_aggs["aggregations"]["top_sections"]["buckets"]
+            ]
+
+            documents = [
+                {"name": b["key"], "chunks": b["doc_count"]}
+                for b in chunk_aggs["aggregations"]["documents"]["buckets"]
+            ]
+
+            content_stats = chunk_aggs["aggregations"]["content_length_stats"]
+
+            section_levels = [
+                {"level": b["key"], "count": b["doc_count"]}
+                for b in chunk_aggs["aggregations"]["section_levels"]["buckets"]
+            ]
+
+            # Process document aggregations
+            file_types = [
+                {"type": b["key"], "count": b["doc_count"]}
+                for b in doc_aggs["aggregations"]["by_file_type"]["buckets"]
+            ]
+
+            section_ranges = [
+                {"range": b["key"], "count": b["doc_count"]}
+                for b in doc_aggs["aggregations"]["section_count_ranges"]["buckets"]
+                if b["doc_count"] > 0
+            ]
+
+            return {
+                "top_sections": top_sections,
+                "documents": documents,
+                "content_stats": {
+                    "avg_length": round(content_stats.get("avg", 0)),
+                    "max_length": content_stats.get("max", 0),
+                    "min_length": content_stats.get("min", 0),
+                    "total_chars": content_stats.get("sum", 0)
+                },
+                "section_levels": section_levels,
+                "file_types": file_types,
+                "section_ranges": section_ranges
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get aggregations: {e}")
+            return {
+                "top_sections": [],
+                "documents": [],
+                "content_stats": {},
+                "section_levels": [],
+                "file_types": [],
+                "section_ranges": []
+            }

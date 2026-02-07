@@ -104,7 +104,7 @@ def render_welcome_screen():
 
     with step_col2:
         st.markdown("**Step 2**")
-        st.info(":robot_face: **Ask** the AI agent questions")
+        st.info("**Ask** the AI agent questions")
 
     with step_col3:
         st.markdown("**Step 3**")
@@ -558,7 +558,7 @@ def render_dashboard():
 
     st.divider()
 
-    # Recent alerts
+    # Recent alerts as table
     st.subheader("Recent Alerts")
     try:
         from src.main import create_indexer
@@ -566,25 +566,55 @@ def render_dashboard():
         alerts = indexer.get_alerts(top_k=10)
 
         if alerts:
+            # Prepare data for table
+            alert_data = []
             for alert in alerts:
-                severity = alert.get("severity", "low")
-                severity_icons = {
-                    "critical": ":red_circle:",
-                    "high": ":large_orange_circle:",
-                    "medium": ":yellow_circle:",
-                    "low": ":green_circle:"
-                }
-                icon = severity_icons.get(severity, ":white_circle:")
+                severity = alert.get("severity", "low").upper()
+                created = alert.get("created_at", "Unknown")
+                if isinstance(created, str) and len(created) > 16:
+                    created = created[:16]  # Truncate timestamp
 
-                with st.expander(f"{icon} {alert.get('title', 'Alert')} ({severity})"):
-                    st.write(alert.get("description", "No description"))
-                    st.caption(f"Document: {alert.get('document_id')} | Created: {alert.get('created_at', 'Unknown')}")
+                alert_data.append({
+                    "Severity": severity,
+                    "Title": alert.get("title", "Alert")[:40],
+                    "Type": alert.get("alert_type", "N/A"),
+                    "Created": created,
+                    "Status": alert.get("status", "open").title()
+                })
+
+            # Create DataFrame and display
+            df = pd.DataFrame(alert_data)
+
+            # Style the dataframe
+            def color_severity(val):
+                colors = {
+                    "CRITICAL": "background-color: #DC3545; color: white",
+                    "HIGH": "background-color: #FD7E14; color: white",
+                    "MEDIUM": "background-color: #FFC107; color: black",
+                    "LOW": "background-color: #28A745; color: white"
+                }
+                return colors.get(val, "")
+
+            styled_df = df.style.applymap(color_severity, subset=["Severity"])
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+            # Export button
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Alerts')
+            buffer.seek(0)
+            st.download_button(
+                ":arrow_down: Export Alerts",
+                data=buffer,
+                file_name="alerts_export.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         else:
             st.success("No open alerts! Your documentation is in good shape.")
 
     except Exception as e:
         st.info("Unable to load alerts")
-        st.caption(str(e)[:50])
+        st.caption(str(e)[:100])
 
 
 def render_agent_chat():
@@ -885,14 +915,14 @@ def render_conflict_viewer():
                 ctx_col1, ctx_col2 = st.columns(2)
 
                 with ctx_col1:
-                    if conflict.location_a.content:
+                    if conflict.location_a.content_snippet:
                         with st.expander(":mag: View Full Context (Doc A)"):
-                            st.text(conflict.location_a.content[:500])
+                            st.text(conflict.location_a.content_snippet[:500])
 
                 with ctx_col2:
-                    if conflict.location_b.content:
+                    if conflict.location_b.content_snippet:
                         with st.expander(":mag: View Full Context (Doc B)"):
-                            st.text(conflict.location_b.content[:500])
+                            st.text(conflict.location_b.content_snippet[:500])
 
                 # Action buttons
                 st.divider()

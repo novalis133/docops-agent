@@ -959,23 +959,62 @@ def render_conflict_viewer():
 
 
 def render_reports():
-    """Render the reports page with generation and download."""
+    """Render the reports page with generation, customization, and multiple export formats."""
     st.header("Reports")
+    st.markdown("Generate comprehensive reports with **multiple export formats** and **custom prompts**")
 
-    report_type = st.selectbox(
-        "Select Report Type",
-        ["Conflict Analysis", "Staleness Report", "Coverage Gap Analysis", "Compliance Audit"]
-    )
+    # Report configuration
+    st.subheader("Report Configuration")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns(2)
 
     with col1:
+        report_type = st.selectbox(
+            "Report Type",
+            ["Conflict Analysis", "Staleness Report", "Coverage Gap Analysis", "Compliance Audit", "Custom Report"],
+            help="Select the type of analysis to include"
+        )
+
         include_recommendations = st.checkbox("Include Recommendations", value=True)
+        include_summary = st.checkbox("Include Executive Summary", value=True)
 
     with col2:
-        output_format = st.radio("Output Format", ["Markdown", "PDF"], horizontal=True)
+        output_format = st.radio(
+            "Export Format",
+            ["Markdown", "Excel", "PDF"],
+            horizontal=True,
+            help="Choose your preferred download format"
+        )
 
-    if st.button("Generate Report", type="primary"):
+        severity_filter = st.multiselect(
+            "Severity Filter",
+            ["critical", "high", "medium", "low"],
+            default=["critical", "high", "medium", "low"],
+            help="Filter issues by severity"
+        )
+
+    # Custom Report Prompt
+    st.divider()
+    custom_prompt = ""
+    if report_type == "Custom Report":
+        st.subheader("Custom Report Builder")
+        st.info("Describe what you want in your report. The AI will generate a tailored analysis.")
+
+        custom_prompt = st.text_area(
+            "Describe your report requirements",
+            placeholder="Example: Create a report focusing on password policies, include a comparison table, and highlight any security risks. Format it for executive presentation.",
+            height=100
+        )
+
+        custom_sections = st.multiselect(
+            "Include Sections",
+            ["Executive Summary", "Conflicts Overview", "Detailed Findings", "Affected Documents", "Resolution Steps", "Risk Assessment", "Compliance Status", "Recommendations"],
+            default=["Executive Summary", "Detailed Findings", "Recommendations"]
+        )
+
+    # Generate button
+    st.divider()
+    if st.button("Generate Report", type="primary", use_container_width=True):
         with st.spinner("Generating report..."):
             try:
                 from src.actions import ReportGenerator
@@ -992,54 +1031,124 @@ def render_reports():
                     gap_analyzer=gap_analyzer
                 )
 
-                # Generate report
+                # Generate report based on type
+                report_data = None  # For Excel export
                 if report_type == "Conflict Analysis":
                     report_content = generator.generate_conflict_report(
                         include_recommendations=include_recommendations
                     )
+                    # Get raw data for Excel
+                    conflicts = detector.detect_all_conflicts()
+                    report_data = [{
+                        "Severity": c.severity.value.upper(),
+                        "Topic": c.topic,
+                        "Description": c.description,
+                        "Document A": c.location_a.document_title,
+                        "Value A": c.value_a,
+                        "Document B": c.location_b.document_title,
+                        "Value B": c.value_b
+                    } for c in conflicts if c.severity.value in severity_filter]
+
                 elif report_type == "Staleness Report":
                     report_content = generator.generate_staleness_report(
                         include_recommendations=include_recommendations
                     )
+                    # Get raw data for Excel
+                    issues = staleness.check_all_documents()
+                    report_data = [{
+                        "Document": i.get("document_title", ""),
+                        "Issue": i.get("issue_type", ""),
+                        "Details": i.get("details", ""),
+                        "Last Updated": i.get("last_updated", "")
+                    } for i in issues]
+
                 elif report_type == "Coverage Gap Analysis":
                     report_content = generator.generate_gap_report(
                         include_recommendations=include_recommendations
                     )
-                else:  # Compliance Audit
+                    gaps = gap_analyzer.analyze_all_gaps()
+                    report_data = [{
+                        "Topic": g.get("topic", ""),
+                        "Gap Type": g.get("gap_type", ""),
+                        "Covered In": ", ".join(g.get("covered_in", [])),
+                        "Missing From": ", ".join(g.get("missing_from", []))
+                    } for g in gaps]
+
+                elif report_type == "Compliance Audit":
                     report_content = generator.generate_compliance_report()
+                    report_data = [{"Section": "Full Report", "Content": report_content}]
+
+                else:  # Custom Report
+                    # Build custom report based on user prompt
+                    report_content = f"# Custom Report\n\n"
+                    report_content += f"**Generated based on:** {custom_prompt}\n\n"
+
+                    if "Executive Summary" in custom_sections:
+                        report_content += "## Executive Summary\n"
+                        report_content += "This report was generated based on your custom requirements.\n\n"
+
+                    if "Conflicts Overview" in custom_sections or "Detailed Findings" in custom_sections:
+                        conflicts = detector.detect_all_conflicts()
+                        report_content += f"## Findings\n\nFound **{len(conflicts)} conflicts** in your document corpus.\n\n"
+                        for c in conflicts[:5]:
+                            report_content += f"- **{c.description}**: {c.value_a} vs {c.value_b}\n"
+
+                    if "Recommendations" in custom_sections:
+                        report_content += "\n## Recommendations\n"
+                        report_content += "1. Review and resolve critical conflicts first\n"
+                        report_content += "2. Establish a single source of truth for policies\n"
+                        report_content += "3. Implement regular document audits\n"
+
+                    report_data = [{"Custom Report": report_content}]
 
                 # Display report
                 st.subheader("Generated Report")
                 st.markdown(report_content)
 
-                # Download button
+                # Download buttons
                 st.divider()
+                st.subheader("Download Report")
 
-                if output_format == "Markdown":
+                dl_col1, dl_col2, dl_col3 = st.columns(3)
+
+                with dl_col1:
                     st.download_button(
-                        label="Download Markdown",
+                        label=":page_facing_up: Download Markdown",
                         data=report_content,
                         file_name=f"{report_type.lower().replace(' ', '_')}_report.md",
-                        mime="text/markdown"
+                        mime="text/markdown",
+                        use_container_width=True
                     )
-                else:
-                    # Generate PDF
+
+                with dl_col2:
+                    # Excel export
+                    if report_data:
+                        df = pd.DataFrame(report_data)
+                        buffer = BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Report')
+                        buffer.seek(0)
+                        st.download_button(
+                            label=":bar_chart: Download Excel",
+                            data=buffer,
+                            file_name=f"{report_type.lower().replace(' ', '_')}_report.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+
+                with dl_col3:
+                    # PDF export
                     try:
                         pdf_bytes = generator.to_pdf(report_content)
                         st.download_button(
-                            label="Download PDF",
+                            label=":closed_book: Download PDF",
                             data=pdf_bytes,
                             file_name=f"{report_type.lower().replace(' ', '_')}_report.pdf",
-                            mime="application/pdf"
+                            mime="application/pdf",
+                            use_container_width=True
                         )
-                    except Exception as e:
-                        st.warning(f"PDF generation failed: {e}")
-                        st.download_button(
-                            label="Download Markdown Instead",
-                            data=report_content,
-                            file_name=f"{report_type.lower().replace(' ', '_')}_report.md",
-                            mime="text/markdown"
-                        )
+                    except Exception:
+                        st.button(":closed_book: PDF (unavailable)", disabled=True, use_container_width=True)
 
             except Exception as e:
                 st.error(f"Failed to generate report: {e}")

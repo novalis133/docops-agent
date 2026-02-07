@@ -1,0 +1,59 @@
+# DigitalOcean App Platform Specification
+# Deploy with: doctl apps create --spec do-app-spec.yaml
+
+name: docops-agent
+
+services:
+  - name: api
+    github:
+      repo: your-username/docops-agent
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: deployment/Dockerfile
+    http_port: 8000
+    instance_count: 1
+    instance_size_slug: professional-xs
+    routes:
+      - path: /api
+    envs:
+      - key: ES_CLOUD_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: ES_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: GRADIENT_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: GRADIENT_WORKSPACE_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: EMBEDDING_PROVIDER
+        scope: RUN_TIME
+        value: gradient
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        value: INFO
+
+  - name: frontend
+    github:
+      repo: your-username/docops-agent
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: deployment/Dockerfile
+    http_port: 8501
+    instance_count: 1
+    instance_size_slug: professional-xs
+    routes:
+      - path: /
+    run_command: streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+    envs:
+      - key: API_URL
+        scope: RUN_TIME
+        value: ${api.PRIVATE_URL}
+
+# Optional: Add a managed database
+# databases:
+#   - name: docops-cache
+#     engine: REDIS
+#     production: false

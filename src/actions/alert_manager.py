@@ -2,14 +2,22 @@
 
 Provides deduplication, acknowledgment, resolution,
 and severity-based routing for document alerts.
+Includes Slack webhook integration for notifications.
 """
 
 import hashlib
+import os
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
 from elasticsearch import Elasticsearch
+
+logger = logging.getLogger(__name__)
+
+# Slack webhook URL (set via environment variable)
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 
 
 @dataclass
@@ -161,7 +169,96 @@ class AlertManager:
             refresh=True
         )
 
+        # Send Slack notification for critical/high severity alerts
+        if severity in ("critical", "high"):
+            self._send_slack_notification(alert_id, severity, title, description)
+
         return alert_id
+
+    def _send_slack_notification(
+        self,
+        alert_id: str,
+        severity: str,
+        title: str,
+        description: str
+    ) -> bool:
+        """Send alert notification to Slack webhook.
+
+        Args:
+            alert_id: The alert ID.
+            severity: Alert severity level.
+            title: Alert title.
+            description: Alert description.
+
+        Returns:
+            True if sent successfully, False otherwise.
+        """
+        if not SLACK_WEBHOOK_URL:
+            logger.debug("Slack webhook not configured, skipping notification")
+            return False
+
+        try:
+            import httpx
+
+            # Color based on severity
+            color = "#DC3545" if severity == "critical" else "#FD7E14"
+            emoji = ":rotating_light:" if severity == "critical" else ":warning:"
+
+            payload = {
+                "attachments": [
+                    {
+                        "color": color,
+                        "blocks": [
+                            {
+                                "type": "header",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": f"{emoji} DocOps Alert: {title}",
+                                    "emoji": True
+                                }
+                            },
+                            {
+                                "type": "section",
+                                "fields": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*Severity:*\n{severity.upper()}"
+                                    },
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*Alert ID:*\n{alert_id[:20]}..."
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"*Description:*\n{description[:500]}"
+                                }
+                            },
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"Sent by DocOps Agent | {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+
+            response = httpx.post(SLACK_WEBHOOK_URL, json=payload, timeout=5)
+            response.raise_for_status()
+            logger.info(f"Slack notification sent for alert {alert_id}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {e}")
+            return False
 
     def acknowledge(
         self,

@@ -280,31 +280,67 @@ class DocOpsAgent:
             content=consistency_result.data if consistency_result.success else {"error": consistency_result.error}
         ))
 
-        # Step 3: Create alerts for critical issues
+        # Step 3: REVIEWER AGENT - Verify findings before creating alerts
         if consistency_result.success:
             inconsistencies = consistency_result.data.get("inconsistencies", [])
-            critical = [i for i in inconsistencies if i.get("severity") == "critical"]
 
-            if critical:
-                self._emit_step("Creating alerts", "running")
-            for issue in critical[:3]:  # Limit alerts
+            if inconsistencies:
+                self._emit_step("Reviewer Agent: Verifying findings", "running")
+
+                # Reviewer agent validates each inconsistency
+                verified_issues = []
+                for issue in inconsistencies:
+                    # Verification logic: confirm both values exist and differ
+                    value_a = issue.get('value_a', '')
+                    value_b = issue.get('value_b', '')
+
+                    if value_a and value_b and value_a != value_b:
+                        # Verified as genuine conflict
+                        issue['verified'] = True
+                        issue['verification_note'] = "Confirmed: Values differ between documents"
+                        verified_issues.append(issue)
+                    else:
+                        issue['verified'] = False
+                        issue['verification_note'] = "Skipped: Could not confirm conflict"
+
                 self._step_counter += 1
-                alert_result = self.tools.create_alert(
-                    severity="critical",
-                    title=f"Conflict: {issue.get('description', 'Unknown')}",
-                    description=f"Conflict between {issue.get('document_a')} and {issue.get('document_b')}: {issue.get('value_a')} vs {issue.get('value_b')}",
-                    affected_doc_ids=[]
-                )
                 steps.append(AgentStep(
                     step_number=self._step_counter,
                     step_type=StepType.TOOL_CALL,
-                    content={"tool": "create_alert", "title": issue.get('description')}
+                    content={"tool": "reviewer_agent", "action": "verify_conflicts", "total": len(inconsistencies), "verified": len(verified_issues)}
                 ))
-                tools_used.append("create_alert")
-            if critical:
-                self._emit_step("Creating alerts", "complete")
+                tools_used.append("reviewer_agent")
+                self._emit_step("Reviewer Agent: Verifying findings", "complete")
 
-        # Step 4: Generate resolution suggestions
+                # Step 4: Create alerts only for VERIFIED critical issues
+                critical = [i for i in verified_issues if i.get("severity") == "critical"]
+
+                if critical:
+                    self._emit_step("Creating verified alerts", "running")
+
+                for issue in critical[:3]:  # Limit alerts
+                    self._step_counter += 1
+                    alert_result = self.tools.create_alert(
+                        severity="critical",
+                        title=f"Conflict: {issue.get('description', 'Unknown')}",
+                        description=f"[VERIFIED] Conflict between {issue.get('document_a')} and {issue.get('document_b')}: {issue.get('value_a')} vs {issue.get('value_b')}",
+                        affected_doc_ids=[]
+                    )
+                    steps.append(AgentStep(
+                        step_number=self._step_counter,
+                        step_type=StepType.TOOL_CALL,
+                        content={"tool": "create_alert", "title": issue.get('description'), "verified": True}
+                    ))
+                    tools_used.append("create_alert")
+
+                if critical:
+                    self._emit_step("Creating verified alerts", "complete")
+
+                # Update consistency_result with verification info
+                consistency_result.data["verified_count"] = len(verified_issues)
+                consistency_result.data["inconsistencies"] = verified_issues
+
+        # Step 5: Generate resolution suggestions
         self._emit_step("Generating resolution suggestions", "running")
         self._emit_step("Generating resolution suggestions", "complete")
 

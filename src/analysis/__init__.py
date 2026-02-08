@@ -31,6 +31,13 @@ from .gap_analyzer import (
     GapSeverity,
     GapType,
 )
+from .remediation_suggester import (
+    RecommendedAction,
+    RemediationAction,
+    RemediationPriority,
+    RemediationSuggester,
+    RemediationSuggestion,
+)
 
 __all__ = [
     # Entity extraction
@@ -53,4 +60,10 @@ __all__ = [
     "GapAnalyzer",
     "GapSeverity",
     "GapType",
+    # Remediation suggestions
+    "RecommendedAction",
+    "RemediationAction",
+    "RemediationPriority",
+    "RemediationSuggester",
+    "RemediationSuggestion",
 ]

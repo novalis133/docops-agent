@@ -118,6 +118,26 @@ ALERTS_INDEX_MAPPING = {
             "updated_at": {"type": "date"},
             "resolved_at": {"type": "date"},
             "resolved_by": {"type": "keyword"},
+            # Resolution tracking fields
+            "resolution_status": {"type": "keyword"},  # open, in_progress, resolved, wont_fix
+            "resolution_notes": {"type": "text"},
+            "verification_status": {"type": "keyword"},  # pending, verified, failed
+            "verified_at": {"type": "date"},
+            "verified_by": {"type": "keyword"},
+            # Remediation suggestion
+            "remediation": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "keyword"},
+                    "target_document": {"type": "keyword"},
+                    "target_section": {"type": "text"},
+                    "suggested_change": {"type": "text"},
+                    "rationale": {"type": "text"},
+                    "priority": {"type": "keyword"},
+                    "estimated_effort": {"type": "keyword"},
+                    "confidence": {"type": "float"},
+                }
+            },
         }
     },
 }

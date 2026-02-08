@@ -388,3 +388,179 @@ async def reset_agent():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Alert Resolution Lifecycle Endpoints
+# =============================================================================
+
+from ..actions.alert_manager import AlertManager
+
+
+class ResolveAlertRequest(BaseModel):
+    """Request to resolve an alert."""
+    resolution_status: str  # open, in_progress, resolved, wont_fix
+    resolution_notes: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+
+class VerifyAlertRequest(BaseModel):
+    """Request to verify an alert resolution."""
+    verified_by: Optional[str] = None
+
+
+# Alert manager singleton
+_alert_manager: Optional[AlertManager] = None
+
+
+def get_alert_manager() -> AlertManager:
+    """Get or create the alert manager singleton."""
+    global _alert_manager
+    if _alert_manager is None:
+        _alert_manager = AlertManager(
+            host=settings.elasticsearch.host,
+            port=settings.elasticsearch.port,
+            scheme=settings.elasticsearch.scheme,
+        )
+    return _alert_manager
+
+
+@app.patch("/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str, request: ResolveAlertRequest):
+    """Update the resolution status of an alert.
+
+    Resolution statuses:
+    - open: Alert is open and needs attention
+    - in_progress: Someone is working on fixing this
+    - resolved: The issue has been fixed
+    - wont_fix: Decided not to fix (with notes explaining why)
+    """
+    try:
+        manager = get_alert_manager()
+        success = manager.update_resolution_status(
+            alert_id=alert_id,
+            resolution_status=request.resolution_status,
+            resolution_notes=request.resolution_notes,
+            resolved_by=request.resolved_by
+        )
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Alert not found or invalid status")
+
+        # Get updated alert
+        alert = manager.get_alert(alert_id)
+
+        return {
+            "message": f"Alert resolution status updated to {request.resolution_status}",
+            "alert_id": alert_id,
+            "resolution_status": request.resolution_status,
+            "alert": alert.to_dict() if alert else None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/alerts/{alert_id}/verify")
+async def verify_alert(alert_id: str, request: Optional[VerifyAlertRequest] = None):
+    """Verify that a resolved alert has been properly fixed.
+
+    Triggers a re-scan using the agent to confirm the issue no longer exists.
+    """
+    try:
+        agent = get_agent()
+
+        # Use the verify_resolution tool
+        result = agent.tools.verify_resolution(alert_id)
+
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error)
+
+        return {
+            "message": "Verification complete",
+            "alert_id": alert_id,
+            "verification_result": result.data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alerts/{alert_id}/remediation")
+async def get_alert_remediation(alert_id: str):
+    """Get the remediation suggestion for an alert.
+
+    If no suggestion exists, generates one using AI.
+    """
+    try:
+        agent = get_agent()
+
+        # Use the get_remediation_suggestion tool
+        result = agent.tools.get_remediation_suggestion(alert_id)
+
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error)
+
+        return {
+            "alert_id": alert_id,
+            "remediation": result.data.get("remediation"),
+            "source": result.data.get("source")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alerts/lifecycle")
+async def get_alerts_lifecycle():
+    """Get alerts grouped by resolution and verification status.
+
+    Returns counts for each lifecycle stage:
+    - open: Alerts needing attention
+    - in_progress: Being worked on
+    - resolved_pending_verification: Fixed but not verified
+    - verified: Confirmed fixed
+    - verification_failed: Fix attempt failed
+    - wont_fix: Decided not to fix
+    """
+    try:
+        manager = get_alert_manager()
+        lifecycle = manager.get_alerts_by_lifecycle()
+
+        return {
+            "lifecycle": lifecycle,
+            "summary": {
+                "needs_attention": (
+                    lifecycle.get("lifecycle_stages", {}).get("open", 0) +
+                    lifecycle.get("lifecycle_stages", {}).get("verification_failed", 0)
+                ),
+                "in_progress": lifecycle.get("lifecycle_stages", {}).get("in_progress", 0),
+                "pending_verification": lifecycle.get("lifecycle_stages", {}).get("resolved_pending_verification", 0),
+                "completed": lifecycle.get("lifecycle_stages", {}).get("verified", 0),
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/alerts/pending-verification")
+async def get_pending_verifications(top_k: int = Query(50, ge=1, le=200)):
+    """Get alerts that are resolved but pending verification."""
+    try:
+        manager = get_alert_manager()
+        alerts = manager.get_pending_verifications(top_k=top_k)
+
+        return {
+            "alerts": [a.to_dict() for a in alerts],
+            "total": len(alerts)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

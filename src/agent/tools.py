@@ -16,7 +16,9 @@ from ..analysis import (
     StalenessChecker,
     GapAnalyzer,
     EntityExtractor,
+    RemediationSuggester,
 )
+from ..actions.alert_manager import AlertManager
 from ..ingestion.indexer import ElasticsearchIndexer
 
 
@@ -99,6 +101,11 @@ class AgentTools:
             documents_index=documents_index,
         )
         self.entity_extractor = EntityExtractor()
+        self.alert_manager = AlertManager(
+            es_client=self.es,
+            alerts_index=alerts_index,
+        )
+        self.remediation_suggester = RemediationSuggester()
 
     def get_tool_definitions(self) -> list[dict]:
         """Get tool definitions in Agent Builder format.
@@ -243,6 +250,34 @@ class AgentTools:
                         }
                     },
                     "required": []
+                }
+            },
+            {
+                "name": "verify_resolution",
+                "description": "Verify that a resolved alert has been properly fixed. Re-runs the original detection logic to confirm the conflict/staleness/gap no longer exists.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "alert_id": {
+                            "type": "string",
+                            "description": "ID of the alert to verify"
+                        }
+                    },
+                    "required": ["alert_id"]
+                }
+            },
+            {
+                "name": "get_remediation_suggestion",
+                "description": "Get AI-powered remediation suggestion for an alert. Suggests which document to update and what changes to make.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "alert_id": {
+                            "type": "string",
+                            "description": "ID of the alert to get suggestion for"
+                        }
+                    },
+                    "required": ["alert_id"]
                 }
             }
         ]
@@ -704,6 +739,234 @@ class AgentTools:
                 error=f"Health check failed: {str(e)}"
             )
 
+    def verify_resolution(self, alert_id: str) -> ToolResult:
+        """Verify that a resolved alert has been properly fixed.
+
+        Args:
+            alert_id: ID of the alert to verify.
+
+        Returns:
+            ToolResult with verification outcome.
+        """
+        try:
+            # Get the alert
+            alert = self.alert_manager.get_alert(alert_id)
+            if not alert:
+                return ToolResult(
+                    success=False,
+                    data=None,
+                    error=f"Alert not found: {alert_id}"
+                )
+
+            if alert.resolution_status not in ("resolved", "in_progress"):
+                return ToolResult(
+                    success=False,
+                    data=None,
+                    error=f"Alert is not resolved. Current status: {alert.resolution_status}"
+                )
+
+            # Re-run detection based on alert type
+            still_exists = False
+            verification_details = {}
+
+            if alert.alert_type in ("conflict", "agent_generated"):
+                # Re-run conflict detection
+                topic = alert.metadata.get("topic") if alert.metadata else None
+                conflicts = self.conflict_detector.detect_conflicts(topic=topic)
+
+                # Check if the same conflict still exists
+                for conflict in conflicts:
+                    # Match by document pair and similar description
+                    if (alert.title and conflict.description and
+                        any(doc in alert.title for doc in [conflict.location_a.document_title, conflict.location_b.document_title])):
+                        still_exists = True
+                        verification_details = {
+                            "conflict_found": True,
+                            "conflict_type": conflict.conflict_type.value,
+                            "value_a": conflict.value_a,
+                            "value_b": conflict.value_b,
+                        }
+                        break
+
+            elif alert.alert_type == "staleness":
+                # Re-run staleness check
+                issues = self.staleness_checker.check_all_documents()
+                for issue in issues:
+                    if alert.document_id == issue.document_id:
+                        still_exists = True
+                        verification_details = {
+                            "staleness_found": True,
+                            "staleness_type": issue.staleness_type.value,
+                        }
+                        break
+
+            elif alert.alert_type == "gap":
+                # Re-run gap analysis
+                gaps = self.gap_analyzer.analyze_all()
+                for gap in gaps:
+                    if alert.title and gap.topic in alert.title:
+                        still_exists = True
+                        verification_details = {
+                            "gap_found": True,
+                            "topic": gap.topic,
+                        }
+                        break
+
+            # Update verification status
+            if still_exists:
+                self.alert_manager.update_verification_status(
+                    alert_id, "failed", verified_by="agent"
+                )
+                return ToolResult(
+                    success=True,
+                    data={
+                        "alert_id": alert_id,
+                        "verification_result": "failed",
+                        "issue_still_exists": True,
+                        "details": verification_details,
+                        "message": "Issue still exists. Alert reopened for further action."
+                    }
+                )
+            else:
+                self.alert_manager.update_verification_status(
+                    alert_id, "verified", verified_by="agent"
+                )
+                return ToolResult(
+                    success=True,
+                    data={
+                        "alert_id": alert_id,
+                        "verification_result": "verified",
+                        "issue_still_exists": False,
+                        "message": "Issue has been successfully resolved and verified."
+                    }
+                )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"Verification failed: {str(e)}"
+            )
+
+    def get_remediation_suggestion(self, alert_id: str) -> ToolResult:
+        """Get AI-powered remediation suggestion for an alert.
+
+        Args:
+            alert_id: ID of the alert.
+
+        Returns:
+            ToolResult with remediation suggestion.
+        """
+        try:
+            # Get the alert
+            alert = self.alert_manager.get_alert(alert_id)
+            if not alert:
+                return ToolResult(
+                    success=False,
+                    data=None,
+                    error=f"Alert not found: {alert_id}"
+                )
+
+            # Check if remediation already exists
+            if alert.remediation:
+                return ToolResult(
+                    success=True,
+                    data={
+                        "alert_id": alert_id,
+                        "remediation": alert.remediation,
+                        "source": "cached"
+                    }
+                )
+
+            # Generate remediation based on alert type
+            if alert.alert_type in ("conflict", "agent_generated"):
+                # Try to find the original conflict
+                topic = alert.metadata.get("topic") if alert.metadata else None
+                conflicts = self.conflict_detector.detect_conflicts(topic=topic)
+
+                for conflict in conflicts:
+                    if (alert.title and
+                        any(doc in alert.title for doc in [conflict.location_a.document_title, conflict.location_b.document_title])):
+                        suggestion = self.remediation_suggester.suggest_remediation(conflict, alert_id)
+                        remediation_dict = suggestion.recommendation.to_dict()
+
+                        # Save to alert
+                        self.alert_manager.set_remediation_suggestion(alert_id, remediation_dict)
+
+                        return ToolResult(
+                            success=True,
+                            data={
+                                "alert_id": alert_id,
+                                "remediation": remediation_dict,
+                                "source": "generated"
+                            }
+                        )
+
+            elif alert.alert_type == "staleness":
+                suggestion = self.remediation_suggester.suggest_staleness_remediation(
+                    document_title=alert.title,
+                    staleness_type=alert.metadata.get("staleness_type", "unknown") if alert.metadata else "unknown",
+                    expired_date=alert.metadata.get("expired_date") if alert.metadata else None,
+                    alert_id=alert_id
+                )
+                remediation_dict = suggestion.recommendation.to_dict()
+                self.alert_manager.set_remediation_suggestion(alert_id, remediation_dict)
+
+                return ToolResult(
+                    success=True,
+                    data={
+                        "alert_id": alert_id,
+                        "remediation": remediation_dict,
+                        "source": "generated"
+                    }
+                )
+
+            elif alert.alert_type == "gap":
+                covered_in = alert.metadata.get("covered_in", []) if alert.metadata else []
+                missing_from = alert.metadata.get("missing_from", []) if alert.metadata else []
+                suggestion = self.remediation_suggester.suggest_gap_remediation(
+                    topic=alert.title or "unknown",
+                    covered_in=covered_in,
+                    missing_from=missing_from,
+                    severity=alert.severity,
+                    alert_id=alert_id
+                )
+                remediation_dict = suggestion.recommendation.to_dict()
+                self.alert_manager.set_remediation_suggestion(alert_id, remediation_dict)
+
+                return ToolResult(
+                    success=True,
+                    data={
+                        "alert_id": alert_id,
+                        "remediation": remediation_dict,
+                        "source": "generated"
+                    }
+                )
+
+            # Default fallback
+            return ToolResult(
+                success=True,
+                data={
+                    "alert_id": alert_id,
+                    "remediation": {
+                        "action": "escalate_to_owner",
+                        "target_document": alert.document_id,
+                        "suggested_change": "Review and resolve manually",
+                        "rationale": "Unable to generate automated suggestion for this alert type.",
+                        "priority": "high",
+                        "estimated_effort": "30-60 minutes"
+                    },
+                    "source": "fallback"
+                }
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"Remediation suggestion failed: {str(e)}"
+            )
+
     def execute_tool(self, tool_name: str, arguments: dict) -> ToolResult:
         """Execute a tool by name with given arguments.
 
@@ -721,6 +984,8 @@ class AgentTools:
             "generate_report": self.generate_report,
             "create_alert": self.create_alert,
             "get_document_health": self.get_document_health,
+            "verify_resolution": self.verify_resolution,
+            "get_remediation_suggestion": self.get_remediation_suggestion,
         }
 
         if tool_name not in tool_map:

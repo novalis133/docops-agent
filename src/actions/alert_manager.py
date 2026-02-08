@@ -37,6 +37,13 @@ class Alert:
     acknowledged_by: Optional[str] = None
     resolved_by: Optional[str] = None
     metadata: Optional[dict] = None
+    # Resolution lifecycle fields
+    resolution_status: str = "open"  # open, in_progress, resolved, wont_fix
+    resolution_notes: Optional[str] = None
+    verification_status: str = "pending"  # pending, verified, failed
+    verified_at: Optional[datetime] = None
+    verified_by: Optional[str] = None
+    remediation: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "Alert":
@@ -56,6 +63,13 @@ class Alert:
             acknowledged_by=data.get("acknowledged_by"),
             resolved_by=data.get("resolved_by"),
             metadata=data.get("metadata"),
+            # Resolution lifecycle fields
+            resolution_status=data.get("resolution_status", "open"),
+            resolution_notes=data.get("resolution_notes"),
+            verification_status=data.get("verification_status", "pending"),
+            verified_at=datetime.fromisoformat(data["verified_at"]) if isinstance(data.get("verified_at"), str) and data.get("verified_at") else None,
+            verified_by=data.get("verified_by"),
+            remediation=data.get("remediation"),
         )
 
     def to_dict(self) -> dict:
@@ -75,6 +89,13 @@ class Alert:
             "acknowledged_by": self.acknowledged_by,
             "resolved_by": self.resolved_by,
             "metadata": self.metadata,
+            # Resolution lifecycle fields
+            "resolution_status": self.resolution_status,
+            "resolution_notes": self.resolution_notes,
+            "verification_status": self.verification_status,
+            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
+            "verified_by": self.verified_by,
+            "remediation": self.remediation,
         }
 
 
@@ -594,6 +615,245 @@ class AlertManager:
 
         except Exception:
             return 0
+
+    # =========================================================================
+    # Resolution Lifecycle Methods
+    # =========================================================================
+
+    def update_resolution_status(
+        self,
+        alert_id: str,
+        resolution_status: str,
+        resolution_notes: Optional[str] = None,
+        resolved_by: Optional[str] = None
+    ) -> bool:
+        """Update the resolution status of an alert.
+
+        Args:
+            alert_id: ID of the alert.
+            resolution_status: New status (open, in_progress, resolved, wont_fix).
+            resolution_notes: Optional notes about the resolution.
+            resolved_by: User/system resolving.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        valid_statuses = {"open", "in_progress", "resolved", "wont_fix"}
+        if resolution_status not in valid_statuses:
+            logger.warning(f"Invalid resolution status: {resolution_status}")
+            return False
+
+        try:
+            now = datetime.utcnow()
+            update_doc = {
+                "resolution_status": resolution_status,
+                "updated_at": now.isoformat(),
+            }
+
+            if resolution_notes:
+                update_doc["resolution_notes"] = resolution_notes
+
+            if resolution_status in ("resolved", "wont_fix"):
+                update_doc["status"] = "resolved"
+                update_doc["resolved_at"] = now.isoformat()
+                if resolved_by:
+                    update_doc["resolved_by"] = resolved_by
+
+            self.es.update(
+                index=self.alerts_index,
+                id=alert_id,
+                doc=update_doc,
+                refresh=True
+            )
+            logger.info(f"Updated alert {alert_id} resolution status to {resolution_status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update resolution status: {e}")
+            return False
+
+    def set_remediation_suggestion(
+        self,
+        alert_id: str,
+        remediation: dict
+    ) -> bool:
+        """Set the remediation suggestion for an alert.
+
+        Args:
+            alert_id: ID of the alert.
+            remediation: Remediation suggestion dictionary.
+
+        Returns:
+            True if set, False if not found.
+        """
+        try:
+            self.es.update(
+                index=self.alerts_index,
+                id=alert_id,
+                doc={
+                    "remediation": remediation,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                refresh=True
+            )
+            logger.info(f"Set remediation suggestion for alert {alert_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set remediation: {e}")
+            return False
+
+    def update_verification_status(
+        self,
+        alert_id: str,
+        verification_status: str,
+        verified_by: Optional[str] = None
+    ) -> bool:
+        """Update the verification status of an alert.
+
+        Args:
+            alert_id: ID of the alert.
+            verification_status: New status (pending, verified, failed).
+            verified_by: User/system that verified.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        valid_statuses = {"pending", "verified", "failed"}
+        if verification_status not in valid_statuses:
+            logger.warning(f"Invalid verification status: {verification_status}")
+            return False
+
+        try:
+            now = datetime.utcnow()
+            update_doc = {
+                "verification_status": verification_status,
+                "updated_at": now.isoformat(),
+            }
+
+            if verification_status in ("verified", "failed"):
+                update_doc["verified_at"] = now.isoformat()
+                if verified_by:
+                    update_doc["verified_by"] = verified_by
+
+            # If verification failed, reopen the alert
+            if verification_status == "failed":
+                update_doc["resolution_status"] = "open"
+                update_doc["status"] = "open"
+                update_doc["resolved_at"] = None
+
+            self.es.update(
+                index=self.alerts_index,
+                id=alert_id,
+                doc=update_doc,
+                refresh=True
+            )
+            logger.info(f"Updated alert {alert_id} verification status to {verification_status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update verification status: {e}")
+            return False
+
+    def get_alerts_by_lifecycle(self) -> dict:
+        """Get alerts grouped by resolution and verification status.
+
+        Returns:
+            Dictionary with alerts grouped by lifecycle stage.
+        """
+        try:
+            result = self.es.search(
+                index=self.alerts_index,
+                size=0,
+                aggs={
+                    "by_resolution_status": {
+                        "terms": {"field": "resolution_status", "missing": "open"}
+                    },
+                    "by_verification_status": {
+                        "terms": {"field": "verification_status", "missing": "pending"}
+                    },
+                    "lifecycle_stages": {
+                        "filters": {
+                            "filters": {
+                                "open": {"term": {"resolution_status": "open"}},
+                                "in_progress": {"term": {"resolution_status": "in_progress"}},
+                                "resolved_pending_verification": {
+                                    "bool": {
+                                        "must": [
+                                            {"term": {"resolution_status": "resolved"}},
+                                            {"term": {"verification_status": "pending"}}
+                                        ]
+                                    }
+                                },
+                                "verified": {"term": {"verification_status": "verified"}},
+                                "verification_failed": {"term": {"verification_status": "failed"}},
+                                "wont_fix": {"term": {"resolution_status": "wont_fix"}}
+                            }
+                        }
+                    }
+                }
+            )
+
+            aggs = result.get("aggregations", {})
+
+            lifecycle = {
+                "total": result["hits"]["total"]["value"],
+                "by_resolution_status": {},
+                "by_verification_status": {},
+                "lifecycle_stages": {}
+            }
+
+            for bucket in aggs.get("by_resolution_status", {}).get("buckets", []):
+                lifecycle["by_resolution_status"][bucket["key"]] = bucket["doc_count"]
+
+            for bucket in aggs.get("by_verification_status", {}).get("buckets", []):
+                lifecycle["by_verification_status"][bucket["key"]] = bucket["doc_count"]
+
+            stages = aggs.get("lifecycle_stages", {}).get("buckets", {})
+            for stage, data in stages.items():
+                lifecycle["lifecycle_stages"][stage] = data.get("doc_count", 0)
+
+            return lifecycle
+
+        except Exception as e:
+            logger.error(f"Failed to get lifecycle stats: {e}")
+            return {"total": 0, "by_resolution_status": {}, "by_verification_status": {}, "lifecycle_stages": {}}
+
+    def get_pending_verifications(self, top_k: int = 50) -> list[Alert]:
+        """Get alerts that are resolved but pending verification.
+
+        Args:
+            top_k: Maximum number of alerts to return.
+
+        Returns:
+            List of alerts pending verification.
+        """
+        try:
+            result = self.es.search(
+                index=self.alerts_index,
+                query={
+                    "bool": {
+                        "must": [
+                            {"term": {"resolution_status": "resolved"}},
+                            {"term": {"verification_status": "pending"}}
+                        ]
+                    }
+                },
+                size=top_k,
+                sort=[{"resolved_at": {"order": "asc"}}]
+            )
+
+            alerts = []
+            for hit in result["hits"]["hits"]:
+                source = hit["_source"]
+                source["id"] = hit["_id"]
+                alerts.append(Alert.from_dict(source))
+
+            return alerts
+
+        except Exception as e:
+            logger.error(f"Failed to get pending verifications: {e}")
+            return []
 
     def _generate_dedup_key(
         self,

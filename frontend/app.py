@@ -179,10 +179,10 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("Navigation")
-        # Ordered to guide user flow: Upload -> Dashboard -> Chat -> View -> Search -> Reports
+        # Ordered to guide user flow: Upload -> Dashboard -> Chat -> View -> Lifecycle -> Search -> Reports
         page = st.radio(
             "Select Page",
-            ["Upload", "Dashboard", "Agent Chat", "Conflict Viewer", "Search", "Reports"],
+            ["Upload", "Dashboard", "Agent Chat", "Conflict Viewer", "Alert Lifecycle", "Search", "Reports"],
             label_visibility="collapsed",
         )
 
@@ -220,6 +220,8 @@ def main():
         render_agent_chat()
     elif page == "Conflict Viewer":
         render_conflict_viewer()
+    elif page == "Alert Lifecycle":
+        render_alert_lifecycle()
     elif page == "Search":
         render_search()
     elif page == "Reports":
@@ -751,6 +753,202 @@ def render_agent_chat():
         st.rerun()
 
 
+def render_remediation_suggestion(conflict):
+    """Show remediation suggestion for a conflict in a modal-like expander."""
+    try:
+        from src.analysis import RemediationSuggester
+
+        suggester = RemediationSuggester()
+        suggestion = suggester.suggest_remediation(conflict, f"conflict-{conflict.id}")
+
+        rec = suggestion.recommendation
+
+        st.markdown("---")
+        st.markdown("### AI Remediation Suggestion")
+
+        # Priority badge
+        priority_colors = {
+            "immediate": "#DC3545",
+            "high": "#FD7E14",
+            "medium": "#FFC107",
+            "low": "#28A745"
+        }
+        priority_color = priority_colors.get(rec.priority.value, "#666")
+
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                    padding: 1.5rem; border-radius: 10px; margin: 1rem 0;">
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <span style="background-color: {priority_color}; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold;">
+                    {rec.priority.value.upper()} PRIORITY
+                </span>
+                <span style="background-color: #6c757d; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                    Est. {rec.estimated_effort}
+                </span>
+                <span style="background-color: #17a2b8; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                    {int(rec.confidence * 100)}% confidence
+                </span>
+            </div>
+            <p><strong>Action:</strong> {rec.action.value.replace('_', ' ').title()}</p>
+            <p><strong>Target:</strong> {rec.target_document}</p>
+            <p><strong>Section:</strong> {rec.target_section or 'N/A'}</p>
+            <p><strong>Suggested Change:</strong><br>
+            <span style="background: white; padding: 0.5rem; border-radius: 5px; display: inline-block; margin-top: 0.5rem;">
+                {rec.suggested_change}
+            </span></p>
+            <p style="color: #666; font-style: italic;"><strong>Rationale:</strong> {rec.rationale}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Action buttons
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            if st.button(":white_check_mark: Accept Suggestion", key=f"accept_{conflict.id}", use_container_width=True):
+                st.success("Suggestion accepted! Mark as 'In Progress' to track resolution.")
+        with action_col2:
+            if st.button(":x: Dismiss", key=f"dismiss_{conflict.id}", use_container_width=True):
+                st.info("Suggestion dismissed.")
+
+    except Exception as e:
+        st.error(f"Failed to generate suggestion: {e}")
+
+
+def render_alert_lifecycle():
+    """Render the alert lifecycle management panel."""
+    st.header("Alert Lifecycle")
+    st.markdown("Track and manage the **complete resolution cycle**: Open -> In Progress -> Resolved -> Verified")
+
+    try:
+        from src.actions.alert_manager import AlertManager
+
+        manager = AlertManager()
+
+        # Get lifecycle stats
+        lifecycle = manager.get_alerts_by_lifecycle()
+
+        # Summary metrics
+        st.subheader("Lifecycle Overview")
+        col1, col2, col3, col4 = st.columns(4)
+
+        stages = lifecycle.get("lifecycle_stages", {})
+
+        with col1:
+            needs_attention = stages.get("open", 0) + stages.get("verification_failed", 0)
+            st.metric(":red_circle: Needs Attention", needs_attention)
+
+        with col2:
+            st.metric(":large_blue_circle: In Progress", stages.get("in_progress", 0))
+
+        with col3:
+            st.metric(":hourglass: Pending Verification", stages.get("resolved_pending_verification", 0))
+
+        with col4:
+            st.metric(":white_check_mark: Verified", stages.get("verified", 0))
+
+        st.divider()
+
+        # Tabs for different views
+        tab1, tab2, tab3 = st.tabs(["Pending Verification", "Open Alerts", "All Alerts"])
+
+        with tab1:
+            pending = manager.get_pending_verifications(top_k=20)
+
+            if not pending:
+                st.success("No alerts pending verification!")
+            else:
+                for alert in pending:
+                    with st.expander(f"{alert.title} - {alert.severity.upper()}"):
+                        st.markdown(f"**Description:** {alert.description}")
+                        st.markdown(f"**Resolved by:** {alert.resolved_by or 'Unknown'}")
+                        st.markdown(f"**Resolved at:** {alert.resolved_at}")
+
+                        if alert.resolution_notes:
+                            st.markdown(f"**Resolution Notes:** {alert.resolution_notes}")
+
+                        # Remediation suggestion
+                        if alert.remediation:
+                            st.markdown("**Remediation Applied:**")
+                            st.json(alert.remediation)
+
+                        # Verify button
+                        if st.button(":mag: Verify Fix", key=f"verify_{alert.id}", use_container_width=True):
+                            with st.spinner("Verifying..."):
+                                try:
+                                    from src.agent import DocOpsAgent
+                                    agent = DocOpsAgent()
+                                    result = agent.tools.verify_resolution(alert.id)
+
+                                    if result.success:
+                                        data = result.data
+                                        if data.get("verification_result") == "verified":
+                                            st.success(f":white_check_mark: {data.get('message')}")
+                                        else:
+                                            st.error(f":x: {data.get('message')}")
+                                    else:
+                                        st.error(f"Verification failed: {result.error}")
+                                except Exception as e:
+                                    st.error(f"Verification error: {e}")
+
+        with tab2:
+            open_alerts = manager.get_alerts(status="open", top_k=20)
+
+            if not open_alerts:
+                st.success("No open alerts!")
+            else:
+                for alert in open_alerts:
+                    with st.expander(f"{alert.title} - {alert.severity.upper()}"):
+                        st.markdown(f"**Description:** {alert.description}")
+                        st.markdown(f"**Created:** {alert.created_at}")
+
+                        # Resolution controls
+                        st.markdown("---")
+                        res_col1, res_col2 = st.columns(2)
+
+                        with res_col1:
+                            new_status = st.selectbox(
+                                "Update Status",
+                                ["open", "in_progress", "resolved", "wont_fix"],
+                                key=f"status_{alert.id}"
+                            )
+
+                        with res_col2:
+                            notes = st.text_input("Resolution Notes", key=f"notes_{alert.id}")
+
+                        if st.button("Update Status", key=f"update_{alert.id}", use_container_width=True):
+                            success = manager.update_resolution_status(
+                                alert.id, new_status, notes, resolved_by="user"
+                            )
+                            if success:
+                                st.success(f"Updated to {new_status}")
+                                st.rerun()
+                            else:
+                                st.error("Update failed")
+
+        with tab3:
+            all_alerts = manager.get_alerts(top_k=50)
+
+            if not all_alerts:
+                st.info("No alerts found.")
+            else:
+                # Create DataFrame for display
+                alert_data = []
+                for a in all_alerts:
+                    alert_data.append({
+                        "Title": a.title[:50] + "..." if len(a.title) > 50 else a.title,
+                        "Severity": a.severity.upper(),
+                        "Status": a.status,
+                        "Resolution": a.resolution_status,
+                        "Verification": a.verification_status,
+                        "Created": str(a.created_at)[:10] if a.created_at else "N/A"
+                    })
+
+                df = pd.DataFrame(alert_data)
+                st.dataframe(df, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Failed to load alert lifecycle: {e}")
+
+
 def render_conflict_viewer():
     """Render the conflict viewer with enhanced visualization."""
     st.header("Conflict Viewer")
@@ -948,7 +1146,8 @@ def render_conflict_viewer():
                             st.error(f"Failed: {e}")
 
                 with btn_col2:
-                    st.button(":white_check_mark: Mark Resolved", key=f"resolve_{conflict.id}", use_container_width=True, disabled=True)
+                    if st.button(":bulb: Get Suggestion", key=f"suggest_{conflict.id}", use_container_width=True):
+                        render_remediation_suggestion(conflict)
 
                 with btn_col3:
                     st.button(":link: View Documents", key=f"view_{conflict.id}", use_container_width=True, disabled=True)

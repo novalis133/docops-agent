@@ -21,6 +21,32 @@ Manual audits take weeks. DocOps Agent does it in **2 minutes**.
 
 ---
 
+## Why DocOps is Different
+
+Most document analysis tools use simple pattern matching. DocOps uses **LLM reasoning** to find conflicts that require UNDERSTANDING.
+
+| Feature | Rule-Based Tools | DocOps Agent |
+|---------|-----------------|--------------|
+| Numeric conflicts (12 vs 14) | YES | YES |
+| Date conflicts (2024 vs 2025) | YES | YES |
+| Keyword contradictions | YES | YES |
+| **Semantic conflicts** | NO | **YES** |
+| **Implication analysis** | NO | **YES** |
+| **Multi-step reasoning** | NO | **YES** |
+| **Edge case detection** | NO | **YES** |
+
+### The Semantic Difference
+
+**Rule-based tools miss this:**
+- Remote Work Policy: *"Employees may work from any location"*
+- Data Security Policy: *"Customer PII must only be accessed from secure office locations"*
+
+There's no keyword conflict. But an employee working remotely on customer data **cannot comply with both policies**.
+
+DocOps catches this because it **understands** the implication, not just the words.
+
+---
+
 ## Architecture Overview
 
 ```mermaid
@@ -99,8 +125,9 @@ flowchart LR
                                   +---------------------------+
 
 =====================================================================================================
-                              6 Agent Tools:
+                                        9 Agent Tools:
    search_documents | compare_sections | run_consistency_check | generate_report | create_alert | get_document_health
+                    detect_semantic_conflicts | get_remediation_suggestion | verify_resolution
 =====================================================================================================
 ```
 
@@ -309,6 +336,9 @@ docops-agent/
 | `generate_report` | Create structured reports |
 | `create_alert` | Flag issues for attention |
 | `get_document_health` | Corpus health metrics |
+| `detect_semantic_conflicts` | LLM-powered semantic conflict detection |
+| `get_remediation_suggestion` | Get fix suggestions for conflicts |
+| `verify_resolution` | Verify that a conflict has been resolved |
 
 ---
 
@@ -326,6 +356,9 @@ docops-agent/
 
 "Check if any documents are expired"
 → Uses: get_document_health → generate_report
+
+"Find semantic conflicts about remote work and data access"
+→ Uses: detect_semantic_conflicts → create_alert → get_remediation_suggestion
 ```
 
 ---
@@ -341,6 +374,8 @@ docops-agent/
 | Staleness Detection | PASS (5 issues found) |
 | Gap Analysis | PASS (27 gaps found) |
 | Agent Multi-Step | PASS (3 tools chained) |
+| Semantic Detection | PASS (LLM + heuristic fallback) |
+| Remediation Lifecycle | PASS (4 stages) |
 | Workflows | PASS (5 workflows) |
 | API Endpoints | PASS |
 | Frontend | PASS |

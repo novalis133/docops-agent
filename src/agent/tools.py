@@ -17,6 +17,7 @@ from ..analysis import (
     GapAnalyzer,
     EntityExtractor,
     RemediationSuggester,
+    SemanticConflictDetector,
 )
 from ..actions.alert_manager import AlertManager
 from ..ingestion.indexer import ElasticsearchIndexer
@@ -106,6 +107,10 @@ class AgentTools:
             alerts_index=alerts_index,
         )
         self.remediation_suggester = RemediationSuggester()
+        self.semantic_detector = SemanticConflictDetector(
+            es_client=self.es,
+            chunks_index=chunks_index,
+        )
 
     def get_tool_definitions(self) -> list[dict]:
         """Get tool definitions in Agent Builder format.
@@ -278,6 +283,30 @@ class AgentTools:
                         }
                     },
                     "required": ["alert_id"]
+                }
+            },
+            {
+                "name": "detect_semantic_conflicts",
+                "description": "Find SEMANTIC conflicts that require understanding document meaning, not just pattern matching. This is the most powerful conflict detection tool - it finds contradictions that simple keyword matching misses. Use this for complex policy analysis where implications matter.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "doc_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of specific document IDs to analyze. If empty, analyzes all documents."
+                        },
+                        "topic": {
+                            "type": "string",
+                            "description": "Optional focus area (e.g., 'remote work', 'data security', 'expenses')"
+                        },
+                        "deep_scan": {
+                            "type": "boolean",
+                            "description": "If true, analyze more section pairs (slower but more thorough). Default false.",
+                            "default": False
+                        }
+                    },
+                    "required": []
                 }
             }
         ]
@@ -967,6 +996,71 @@ class AgentTools:
                 error=f"Remediation suggestion failed: {str(e)}"
             )
 
+    def detect_semantic_conflicts(
+        self,
+        doc_ids: Optional[list[str]] = None,
+        topic: Optional[str] = None,
+        deep_scan: bool = False
+    ) -> ToolResult:
+        """Detect semantic conflicts using LLM reasoning.
+
+        This is the key differentiator - finds conflicts that require UNDERSTANDING,
+        not just pattern matching.
+
+        Args:
+            doc_ids: Optional list of document IDs to analyze.
+            topic: Optional topic to focus on.
+            deep_scan: If True, analyze more pairs (slower but thorough).
+
+        Returns:
+            ToolResult with semantic conflicts.
+        """
+        try:
+            conflicts = self.semantic_detector.detect_semantic_conflicts(
+                doc_ids=doc_ids,
+                topic=topic,
+                deep_scan=deep_scan,
+                max_pairs=100 if deep_scan else 30,
+            )
+
+            # Convert to dictionaries
+            conflict_dicts = [c.to_dict() for c in conflicts]
+
+            # Group by type
+            by_type = {}
+            for c in conflict_dicts:
+                ctype = c["conflict_type"]
+                if ctype not in by_type:
+                    by_type[ctype] = []
+                by_type[ctype].append(c)
+
+            # Calculate severity summary
+            severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for c in conflict_dicts:
+                severity_counts[c["severity"]] = severity_counts.get(c["severity"], 0) + 1
+
+            return ToolResult(
+                success=True,
+                data={
+                    "total_conflicts": len(conflicts),
+                    "conflicts": conflict_dicts,
+                    "by_type": by_type,
+                    "severity_summary": severity_counts,
+                    "analysis_type": "semantic",
+                    "deep_scan": deep_scan,
+                    "topic_focus": topic,
+                    "documents_analyzed": doc_ids if doc_ids else "all",
+                    "differentiator": "Uses LLM reasoning to find conflicts that pattern-matching misses"
+                }
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"Semantic conflict detection failed: {str(e)}"
+            )
+
     def execute_tool(self, tool_name: str, arguments: dict) -> ToolResult:
         """Execute a tool by name with given arguments.
 
@@ -986,6 +1080,7 @@ class AgentTools:
             "get_document_health": self.get_document_health,
             "verify_resolution": self.verify_resolution,
             "get_remediation_suggestion": self.get_remediation_suggestion,
+            "detect_semantic_conflicts": self.detect_semantic_conflicts,
         }
 
         if tool_name not in tool_map:

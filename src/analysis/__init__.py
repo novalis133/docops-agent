@@ -43,6 +43,12 @@ from .analytics import (
     CorpusAnalyticsEngine,
     TimeSeriesDataPoint,
 )
+from .semantic_conflict_detector import (
+    SemanticConflict,
+    SemanticConflictDetector,
+    SemanticConflictType,
+    SemanticSeverity,
+)
 
 __all__ = [
     # Entity extraction
@@ -75,4 +81,9 @@ __all__ = [
     "CorpusAnalytics",
     "CorpusAnalyticsEngine",
     "TimeSeriesDataPoint",
+    # Semantic conflict detection
+    "SemanticConflict",
+    "SemanticConflictDetector",
+    "SemanticConflictType",
+    "SemanticSeverity",
 ]

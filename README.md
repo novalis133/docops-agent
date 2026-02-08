@@ -21,6 +21,95 @@ Manual audits take weeks. DocOps Agent does it in **2 minutes**.
 
 ---
 
+## Architecture Overview
+
+```mermaid
+flowchart LR
+    subgraph Input["Document Input"]
+        D[PDF/DOCX/MD/TXT]
+    end
+
+    subgraph Pipeline["Ingestion"]
+        P[Parser] --> C[Chunker] --> E[Embedder]
+    end
+
+    subgraph ES["Elasticsearch 8.12"]
+        I1[docops-documents]
+        I2[docops-chunks]
+        I3[docops-alerts]
+        HS[Hybrid Search]
+    end
+
+    subgraph Agent["Multi-Step Agent"]
+        AC[Agent Core]
+        T[6 Tools]
+        RA[Reviewer Agent]
+    end
+
+    subgraph Analysis["Analysis Engine"]
+        CD[Conflict Detector]
+        SC[Staleness Checker]
+        GA[Gap Analyzer]
+    end
+
+    subgraph Output["Output"]
+        AL[Alerts]
+        RP[Reports]
+        SL[Slack]
+    end
+
+    D --> P
+    E --> I2
+    P --> I1
+    I1 & I2 --> HS
+    HS --> AC
+    AC --> T
+    T --> Analysis
+    T --> RA
+    RA --> Output
+    I3 --> AL
+```
+
+<details>
+<summary><b>ASCII Diagram (for DevPost compatibility)</b></summary>
+
+```
+                                 DocOps Agent Architecture
+=====================================================================================================
+
+  +------------------+     +-------------------------+     +---------------------------+
+  |  DOCUMENT INPUT  |     |    INGESTION PIPELINE   |     |    ELASTICSEARCH 8.12     |
+  |------------------|     |-------------------------|     |---------------------------|
+  |  - PDF           |     |  Parser                 |     |  docops-documents (BM25)  |
+  |  - DOCX          | --> |    |                    | --> |  docops-chunks (kNN)      |
+  |  - Markdown      |     |  Chunker                |     |  docops-alerts            |
+  |  - Text          |     |    |                    |     |                           |
+  +------------------+     |  Embedder (384-dim)     |     |  Hybrid Search Engine     |
+                           +-------------------------+     +-------------+-------------+
+                                                                         |
+                                                                         v
++---------------------------+     +---------------------------+     +---------------------------+
+|      OUTPUT LAYER         |     |    MULTI-STEP AGENT       |     |    ANALYSIS ENGINE        |
+|---------------------------|     |---------------------------|     |---------------------------|
+|  Alerts (4 severities)    | <-- |  1. Analyze Query         | <-- |  Conflict Detector        |
+|  Reports (MD/Excel/PDF)   |     |  2. Select Tools (6)      |     |  Staleness Checker        |
+|  Slack Notifications      |     |  3. Execute & Verify      |     |  Gap Analyzer             |
++---------------------------+     |  4. Reviewer Agent        |     +---------------------------+
+                                  |  5. Synthesize Response   |
+                                  +---------------------------+
+
+=====================================================================================================
+                              6 Agent Tools:
+   search_documents | compare_sections | run_consistency_check | generate_report | create_alert | get_document_health
+=====================================================================================================
+```
+
+</details>
+
+> For the full detailed architecture diagram, see [docs/architecture.md](docs/architecture.md)
+
+---
+
 ## Key Features
 
 ### 1. Multi-Step Agent Reasoning
@@ -82,7 +171,7 @@ Pre-built workflows for common operations:
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/your-repo/docops-agent.git
+git clone https://github.com/novalis133/docops-agent.git
 cd docops-agent
 pip install -r requirements.txt
 ```

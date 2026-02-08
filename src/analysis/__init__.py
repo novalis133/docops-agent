@@ -38,6 +38,11 @@ from .remediation_suggester import (
     RemediationSuggester,
     RemediationSuggestion,
 )
+from .analytics import (
+    CorpusAnalytics,
+    CorpusAnalyticsEngine,
+    TimeSeriesDataPoint,
+)
 
 __all__ = [
     # Entity extraction
@@ -66,4 +71,8 @@ __all__ = [
     "RemediationPriority",
     "RemediationSuggester",
     "RemediationSuggestion",
+    # Analytics
+    "CorpusAnalytics",
+    "CorpusAnalyticsEngine",
+    "TimeSeriesDataPoint",
 ]

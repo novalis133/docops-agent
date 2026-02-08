@@ -15,7 +15,17 @@ logger = logging.getLogger(__name__)
 
 
 class ElasticsearchIndexer:
-    """Index documents and chunks into Elasticsearch."""
+    """Index documents and chunks into Elasticsearch.
+
+    Features:
+    - Ingest pipeline integration for auto-enrichment
+    - Bulk indexing for performance
+    - Hybrid search (BM25 + kNN vectors)
+    """
+
+    # Ingest pipeline names
+    DOCUMENTS_PIPELINE = "docops-documents-enrichment"
+    CHUNKS_PIPELINE = "docops-chunks-enrichment"
 
     def __init__(
         self,
@@ -30,10 +40,12 @@ class ElasticsearchIndexer:
         documents_index: str = "docops-documents",
         chunks_index: str = "docops-chunks",
         alerts_index: str = "docops-alerts",
+        use_pipelines: bool = True,
     ) -> None:
         self.documents_index = documents_index
         self.chunks_index = chunks_index
         self.alerts_index = alerts_index
+        self.use_pipelines = use_pipelines
 
         if es_client:
             self.es = es_client
@@ -104,12 +116,19 @@ class ElasticsearchIndexer:
             "updated_at": timestamp,
         }
 
-        self.es.index(
-            index=self.documents_index,
-            id=doc_id,
-            document=doc_body,
-            refresh=refresh,
-        )
+        # Index with optional pipeline for auto-enrichment
+        index_kwargs = {
+            "index": self.documents_index,
+            "id": doc_id,
+            "document": doc_body,
+            "refresh": refresh,
+        }
+
+        if self.use_pipelines and self._pipeline_exists(self.DOCUMENTS_PIPELINE):
+            index_kwargs["pipeline"] = self.DOCUMENTS_PIPELINE
+            logger.debug(f"Using ingest pipeline: {self.DOCUMENTS_PIPELINE}")
+
+        self.es.index(**index_kwargs)
 
         # Index chunks in bulk
         if embedded_chunks:
@@ -161,11 +180,18 @@ class ElasticsearchIndexer:
             }
             actions.append(action)
 
+        # Use pipeline if available
+        pipeline = None
+        if self.use_pipelines and self._pipeline_exists(self.CHUNKS_PIPELINE):
+            pipeline = self.CHUNKS_PIPELINE
+            logger.debug(f"Using ingest pipeline for chunks: {self.CHUNKS_PIPELINE}")
+
         success, errors = helpers.bulk(
             self.es,
             actions,
             refresh=refresh,
             raise_on_error=False,
+            pipeline=pipeline,
         )
 
         if errors:
@@ -174,6 +200,21 @@ class ElasticsearchIndexer:
                 logger.warning(f"  Error: {error}")
 
         logger.debug(f"Bulk indexed {success} chunks")
+
+    def _pipeline_exists(self, pipeline_id: str) -> bool:
+        """Check if an ingest pipeline exists.
+
+        Args:
+            pipeline_id: The pipeline ID to check.
+
+        Returns:
+            True if the pipeline exists, False otherwise.
+        """
+        try:
+            self.es.ingest.get_pipeline(id=pipeline_id)
+            return True
+        except Exception:
+            return False
 
     def search_documents(
         self,

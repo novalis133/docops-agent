@@ -564,3 +564,98 @@ async def get_pending_verifications(top_k: int = Query(50, ge=1, le=200)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Advanced Analytics Endpoints
+# =============================================================================
+
+from ..analysis import CorpusAnalyticsEngine
+
+
+# Analytics engine singleton
+_analytics_engine: Optional[CorpusAnalyticsEngine] = None
+
+
+def get_analytics_engine() -> CorpusAnalyticsEngine:
+    """Get or create the analytics engine singleton."""
+    global _analytics_engine
+    if _analytics_engine is None:
+        _analytics_engine = CorpusAnalyticsEngine(
+            host=settings.elasticsearch.host,
+            port=settings.elasticsearch.port,
+            scheme=settings.elasticsearch.scheme,
+        )
+    return _analytics_engine
+
+
+@app.get("/analytics")
+async def get_corpus_analytics():
+    """Get comprehensive corpus analytics using advanced Elasticsearch aggregations.
+
+    Returns metrics including:
+    - Staleness distribution (using runtime fields)
+    - Conflicts over time (date histogram)
+    - Document type health (nested aggregations)
+    - Significant conflict terms
+    - Complexity analysis
+    """
+    try:
+        engine = get_analytics_engine()
+        analytics = engine.get_corpus_analytics()
+
+        return {
+            "analytics": analytics.to_dict(),
+            "elasticsearch_features_used": [
+                "runtime_fields",
+                "date_histogram",
+                "nested_aggregations",
+                "significant_text",
+                "bucket_script"
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/trends")
+async def get_trend_analysis(
+    metric: str = Query("alerts", enum=["alerts", "documents", "chunks"]),
+    period_days: int = Query(30, ge=7, le=365)
+):
+    """Analyze trends for a specific metric over time.
+
+    Uses Elasticsearch range aggregations to compare current vs previous periods.
+    """
+    try:
+        engine = get_analytics_engine()
+        trend = engine.get_trend_analysis(metric=metric, period_days=period_days)
+
+        return {
+            "trend_analysis": trend,
+            "elasticsearch_features_used": ["range_filter", "period_comparison"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/analytics/hotspots")
+async def get_hotspot_analysis(top_k: int = Query(10, ge=1, le=50)):
+    """Identify document sections that are conflict hotspots.
+
+    Uses multi-level aggregations with risk scoring.
+    """
+    try:
+        engine = get_analytics_engine()
+        hotspots = engine.get_hotspot_analysis(top_k=top_k)
+
+        return {
+            "hotspots": hotspots,
+            "total": len(hotspots),
+            "elasticsearch_features_used": ["terms_aggregation", "nested_aggs", "bucket_sort"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

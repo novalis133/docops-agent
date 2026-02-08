@@ -365,6 +365,168 @@ docops-agent/
 
 ---
 
+## Technical Deep Dive: Advanced Elasticsearch Features
+
+This section demonstrates mastery of Elasticsearch beyond basic search.
+
+### 1. Ingest Pipelines for Auto-Enrichment
+
+Documents are automatically enriched on ingestion using custom ingest pipelines:
+
+```
+PUT _ingest/pipeline/docops-documents-enrichment
+```
+
+```mermaid
+flowchart LR
+    subgraph Pipeline["Ingest Pipeline"]
+        P1[Set Timestamp] --> P2[Extract Dates]
+        P2 --> P3[Extract Numbers]
+        P3 --> P4[Calculate Metrics]
+        P4 --> P5[Add Metadata]
+    end
+
+    Doc[Document] --> Pipeline
+    Pipeline --> Index[(Elasticsearch)]
+```
+
+**Processors:**
+- **Date Extraction**: Regex patterns find ISO dates and year references for staleness detection
+- **Numeric Requirements**: Extracts patterns like "12 characters", "30 days", "$500" for conflict hints
+- **Content Metrics**: Calculates word count, reading time, complexity indicators
+
+### 2. Runtime Fields for Dynamic Calculations
+
+Instead of re-indexing, we use runtime fields for real-time staleness scoring:
+
+```json
+{
+  "runtime": {
+    "days_since_indexed": {
+      "type": "long",
+      "script": "emit((now - indexed_at) / 86400000)"
+    },
+    "staleness_risk": {
+      "type": "keyword",
+      "script": "if (days > 365) emit('critical'); ..."
+    }
+  }
+}
+```
+
+**Benefits:**
+- No re-indexing required when business logic changes
+- Calculations always reflect current time
+- Searchable and aggregatable like stored fields
+
+### 3. Advanced Aggregations for Analytics
+
+```json
+POST docops-documents/_search
+{
+  "size": 0,
+  "aggs": {
+    "conflicts_over_time": {
+      "date_histogram": { "field": "created_at", "calendar_interval": "week" }
+    },
+    "staleness_distribution": {
+      "terms": { "field": "staleness_risk" }
+    },
+    "doc_type_health": {
+      "terms": { "field": "file_type" },
+      "aggs": {
+        "avg_age": { "avg": { "field": "days_since_indexed" } },
+        "severity_breakdown": { "terms": { "field": "severity" } }
+      }
+    },
+    "significant_terms": {
+      "significant_text": { "field": "content", "min_doc_count": 2 }
+    }
+  }
+}
+```
+
+**Aggregation Types Used:**
+- `date_histogram`: Trend analysis over time
+- `terms` + nested: Multi-level drill-down
+- `significant_text`: Find unusual terms in conflicted documents
+- `avg`, `sum`, `cardinality`: Statistical metrics
+- Runtime fields in aggregations: Dynamic calculations
+
+### 4. Elasticsearch Watcher for Automation
+
+Automated monitoring without external schedulers:
+
+```json
+PUT _watcher/watch/docops-new-document-scan
+{
+  "trigger": { "schedule": { "interval": "5m" } },
+  "input": {
+    "search": {
+      "body": { "query": { "range": { "indexed_at": { "gte": "now-5m" } } } }
+    }
+  },
+  "condition": { "compare": { "ctx.payload.hits.total.value": { "gt": 0 } } },
+  "actions": {
+    "webhook": {
+      "url": "http://localhost:8000/agent/workflow",
+      "body": "{\"workflow\": \"conflict_scan\"}"
+    }
+  }
+}
+```
+
+**Watcher Automations:**
+- New document ingestion triggers conflict scan
+- Daily staleness audit at 6 AM
+- Alert on critical severity thresholds
+
+### 5. Hybrid Search Architecture
+
+```
+Query: "password requirements"
+         │
+         ▼
+┌─────────────────────────────────────┐
+│         Hybrid Search               │
+├──────────────┬──────────────────────┤
+│   BM25       │    kNN Vector        │
+│   (0.7)      │      (0.3)           │
+├──────────────┼──────────────────────┤
+│ Exact term   │ Semantic similarity  │
+│ matching     │ 384-dim vectors      │
+└──────────────┴──────────────────────┘
+         │
+         ▼
+    Ranked Results
+```
+
+**Configuration:**
+- `dense_vector` field type with cosine similarity
+- Weights tuned for policy documents (BM25 higher for exact terms)
+- `num_candidates` set to 10x `k` for better recall
+
+### 6. API Endpoints for Analytics
+
+| Endpoint | Method | ES Features Used |
+|----------|--------|------------------|
+| `/analytics` | GET | Runtime fields, nested aggs, significant_text |
+| `/analytics/trends` | GET | Range filters, period comparison |
+| `/analytics/hotspots` | GET | Terms agg, bucket sort, risk scoring |
+
+### Setup Commands
+
+```bash
+# Setup advanced ES features
+python scripts/setup_advanced_es.py --host localhost --port 9200
+
+# Verify setup
+curl "localhost:9200/_ingest/pipeline/docops-*"
+curl "localhost:9200/_watcher/watch/docops-*"
+```
+
+---
+
 ## License
 
 MIT License

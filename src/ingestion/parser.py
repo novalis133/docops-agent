@@ -251,7 +251,7 @@ class DocumentParser:
         current_level = 1
 
         for element in soup.children:
-            if element.name and element.name.startswith("h") and len(element.name) == 2:
+            if element.name and element.name.startswith("h") and len(element.name) == 2 and element.name[1].isdigit():
                 # Save previous section
                 if current_section_content:
                     sections.append(

@@ -1,0 +1,208 @@
+1
+00:00:00,000 --> 00:00:03,500
+Your company has a problem
+you don't even know about.
+
+2
+00:00:04,000 --> 00:00:08,000
+Your Employee Handbook says
+passwords need twelve characters.
+
+3
+00:00:08,500 --> 00:00:11,500
+Your Security Policy says fourteen.
+
+4
+00:00:12,000 --> 00:00:14,500
+Which one is right?
+
+5
+00:00:14,500 --> 00:00:17,000
+Until today, you'd never know.
+
+6
+00:00:18,000 --> 00:00:21,000
+Introducing DocOps Agent.
+
+7
+00:00:22,000 --> 00:00:25,000
+This isn't a chatbot.
+This is an intelligent agent that thinks.
+
+8
+00:00:26,000 --> 00:00:30,000
+Watch. I click one button, and DocOps
+launches a multi-step analysis.
+
+9
+00:00:31,000 --> 00:00:36,000
+First, it searches your entire document corpus
+using hybrid search,
+
+10
+00:00:36,500 --> 00:00:40,000
+combining keyword matching
+with semantic understanding.
+
+11
+00:00:41,000 --> 00:00:45,500
+Then it compares related sections
+across documents,
+
+12
+00:00:46,000 --> 00:00:50,000
+looking for conflicts that simple
+pattern-matching would miss.
+
+13
+00:00:51,000 --> 00:00:55,000
+Five tools. One agent. Zero manual work.
+
+14
+00:00:56,000 --> 00:01:01,000
+Here's what it found.
+Twenty-three issues across fifty documents.
+
+15
+00:01:01,500 --> 00:01:04,000
+In under two minutes.
+
+16
+00:01:05,000 --> 00:01:08,000
+Look at this conflict.
+
+17
+00:01:08,500 --> 00:01:12,500
+The Remote Work Policy says employees
+can work from anywhere.
+
+18
+00:01:13,000 --> 00:01:17,500
+But the Data Security Policy requires
+customer data work on approved networks only.
+
+19
+00:01:18,500 --> 00:01:23,000
+A remote employee handling customer data
+would violate security policy,
+
+20
+00:01:23,500 --> 00:01:26,500
+but there's no obvious keyword conflict.
+
+21
+00:01:27,500 --> 00:01:30,500
+DocOps understood the implication.
+
+22
+00:01:31,000 --> 00:01:34,000
+That's semantic conflict detection.
+
+23
+00:01:34,500 --> 00:01:37,000
+No other tool does this.
+
+24
+00:01:38,000 --> 00:01:42,000
+Under the hood, this is pure Elasticsearch power.
+
+25
+00:01:43,000 --> 00:01:47,500
+Hybrid search combines BM25 keyword matching
+with dense vector embeddings.
+
+26
+00:01:48,500 --> 00:01:53,000
+Every document is chunked, embedded,
+and indexed for lightning-fast retrieval.
+
+27
+00:01:54,000 --> 00:01:58,000
+The agent uses six custom tools,
+all powered by Elasticsearch queries.
+
+28
+00:01:59,000 --> 00:02:02,000
+Aggregations analyze conflict patterns.
+
+29
+00:02:02,500 --> 00:02:05,500
+Runtime fields calculate staleness dynamically.
+
+30
+00:02:06,500 --> 00:02:10,000
+This is what Elasticsearch Agent Builder
+was made for.
+
+31
+00:02:10,500 --> 00:02:14,000
+Multi-step reasoning. Tool orchestration.
+Real intelligence.
+
+32
+00:02:15,000 --> 00:02:18,500
+But finding problems is only half the battle.
+
+33
+00:02:19,500 --> 00:02:23,000
+DocOps generates compliance reports
+automatically.
+
+34
+00:02:23,500 --> 00:02:26,500
+Conflicts grouped by severity.
+Staleness analysis. Coverage gaps.
+
+35
+00:02:27,500 --> 00:02:31,000
+Every alert includes remediation suggestions.
+
+36
+00:02:31,500 --> 00:02:35,000
+Not just "here's a problem,"
+but "here's how to fix it."
+
+37
+00:02:36,000 --> 00:02:39,000
+And everything is logged for audit trails.
+
+38
+00:02:39,500 --> 00:02:43,000
+Timestamp. Action. Result.
+Ready for compliance review.
+
+39
+00:02:44,000 --> 00:02:47,500
+Twenty-three critical issues.
+Fifty documents analyzed.
+
+40
+00:02:48,000 --> 00:02:50,000
+Two minutes.
+
+41
+00:02:51,000 --> 00:02:55,000
+A compliance team would spend weeks
+doing this manually.
+
+42
+00:02:55,500 --> 00:02:58,500
+And they'd still miss
+the semantic conflicts.
+
+43
+00:03:00,000 --> 00:03:02,500
+DocOps Agent.
+
+44
+00:03:03,000 --> 00:03:06,000
+Built with Elasticsearch Agent Builder.
+
+45
+00:03:06,500 --> 00:03:10,000
+Intelligent document operations
+for the enterprise.
+
+46
+00:03:11,000 --> 00:03:15,000
+Find conflicts. Fix compliance. Sleep better.

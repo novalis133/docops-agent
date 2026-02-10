@@ -166,3 +166,6 @@ secrets/
 *.mp4
 *.mov
 *.avi
+*.webm
+*.mp3
+video_pipeline/output/

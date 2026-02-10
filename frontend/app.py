@@ -630,6 +630,31 @@ def render_agent_chat():
     if "agent_steps" not in st.session_state:
         st.session_state.agent_steps = []
 
+    # Auto-scroll to bottom when there are messages
+    if st.session_state.messages:
+        st.markdown(
+            """
+            <script>
+                window.scrollTo(0, document.body.scrollHeight);
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
+        # Alternative method using Streamlit's native scroll
+        st.markdown(
+            """
+            <style>
+                section.main > div {scroll-behavior: smooth;}
+            </style>
+            <div id="scroll-anchor"></div>
+            <script>
+                const anchor = document.getElementById('scroll-anchor');
+                if (anchor) anchor.scrollIntoView({behavior: 'smooth', block: 'end'});
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
+
     # Sidebar-style quick queries on the right
     with st.sidebar:
         st.divider()
@@ -748,6 +773,18 @@ def render_agent_chat():
                     "content": error_msg
                 })
                 st.session_state.agent_steps.append([])
+
+        # Scroll to bottom after new message
+        st.markdown(
+            """
+            <script>
+                setTimeout(function() {
+                    window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});
+                }, 100);
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
 
         # Rerun to update the display and keep input at bottom
         st.rerun()

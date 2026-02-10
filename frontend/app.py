@@ -439,11 +439,110 @@ def render_dashboard():
                 engine = WorkflowEngine()
                 result = engine.execute_workflow(action)
 
-                st.subheader(f"Results: {action}")
-                st.write(result.summary)
+                st.subheader(f"Results: {action.replace('_', ' ').title()}")
+                st.success(result.summary)
 
-                with st.expander("View Details"):
-                    st.json(result.details)
+                # Format results based on action type
+                details = result.details
+
+                if action == "conflict_scan" and details.get("conflicts"):
+                    conflicts = details["conflicts"]
+                    total = details.get("total_conflicts", len(conflicts))
+                    critical = details.get("critical", 0)
+                    high = details.get("high", 0)
+
+                    # Summary metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Total Conflicts", total)
+                    m2.metric("Critical", critical)
+                    m3.metric("High", high)
+                    m4.metric("Other", total - critical - high)
+
+                    st.divider()
+
+                    for i, conflict in enumerate(conflicts):
+                        severity = conflict.get("severity", "medium").upper()
+                        severity_colors = {
+                            "CRITICAL": "#DC3545",
+                            "HIGH": "#FD7E14",
+                            "MEDIUM": "#FFC107",
+                            "LOW": "#28A745"
+                        }
+                        color = severity_colors.get(severity, "#666")
+
+                        with st.expander(f"{conflict.get('description', 'Conflict')}", expanded=(i < 3)):
+                            st.markdown(f"""
+                            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                                <span style="background-color: {color}; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold;">
+                                    {severity}
+                                </span>
+                                <span style="background-color: #6c757d; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                                    {conflict.get('type', 'conflict')}
+                                </span>
+                                <span style="background-color: #17a2b8; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+                                    {conflict.get('topic', 'general')}
+                                </span>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                            col1, vs_col, col2 = st.columns([5, 1, 5])
+                            with col1:
+                                st.markdown(f"""
+                                <div style="background: #fff5f5; padding: 1rem; border-radius: 8px; border-left: 4px solid #DC3545;">
+                                    <div style="font-weight: bold; color: #DC3545; margin-bottom: 0.5rem;">
+                                        {conflict.get('document_a', 'Document A')}
+                                    </div>
+                                    <div style="background: white; padding: 0.75rem; border-radius: 4px; font-size: 1.2rem; font-weight: bold; text-align: center;">
+                                        {conflict.get('value_a', 'N/A')}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with vs_col:
+                                st.markdown("<div style='text-align: center; padding-top: 2rem; font-weight: bold; color: #666;'>VS</div>", unsafe_allow_html=True)
+                            with col2:
+                                st.markdown(f"""
+                                <div style="background: #f0f7ff; padding: 1rem; border-radius: 8px; border-left: 4px solid #667eea;">
+                                    <div style="font-weight: bold; color: #667eea; margin-bottom: 0.5rem;">
+                                        {conflict.get('document_b', 'Document B')}
+                                    </div>
+                                    <div style="background: white; padding: 0.75rem; border-radius: 4px; font-size: 1.2rem; font-weight: bold; text-align: center;">
+                                        {conflict.get('value_b', 'N/A')}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                elif action == "staleness_audit":
+                    staleness_issues = details.get("staleness_issues", 0)
+                    expired = details.get("expired_documents", 0)
+
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Staleness Issues", staleness_issues)
+                    m2.metric("Expired Documents", expired)
+                    m3.metric("Review Overdue", details.get("review_overdue", 0))
+
+                    if details.get("expired_list"):
+                        st.divider()
+                        st.markdown("**Expired Documents:**")
+                        for doc in details.get("expired_list", []):
+                            st.warning(f":warning: {doc}")
+
+                elif action == "gap_analysis":
+                    total_gaps = details.get("coverage_gaps", 0)
+                    critical_gaps = details.get("critical_gaps", 0)
+
+                    m1, m2 = st.columns(2)
+                    m1.metric("Coverage Gaps", total_gaps)
+                    m2.metric("Critical/High Priority", critical_gaps)
+
+                    if details.get("gap_areas"):
+                        st.divider()
+                        st.markdown("**Gap Areas:**")
+                        for area in details.get("gap_areas", []):
+                            st.info(f":mag: {area}")
+                else:
+                    # Fallback for other results
+                    with st.expander("View Raw Details"):
+                        st.json(details)
 
             except Exception as e:
                 st.error(f"Action failed: {e}")

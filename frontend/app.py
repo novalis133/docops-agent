@@ -1210,7 +1210,7 @@ def render_conflict_viewer():
                     <div style="background: linear-gradient(135deg, #ff6b6b22 0%, #ff848422 100%);
                                 padding: 1.5rem; border-radius: 10px; border-left: 4px solid #DC3545;">
                         <div style="font-weight: bold; color: #DC3545; margin-bottom: 0.5rem;">
-                            :page_facing_up: {conflict.location_a.document_title}
+                            📄 {conflict.location_a.document_title}
                         </div>
                         <div style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
                             Section: {conflict.location_a.section_title}
@@ -1233,7 +1233,7 @@ def render_conflict_viewer():
                     <div style="background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
                                 padding: 1.5rem; border-radius: 10px; border-left: 4px solid #667eea;">
                         <div style="font-weight: bold; color: #667eea; margin-bottom: 0.5rem;">
-                            :page_facing_up: {conflict.location_b.document_title}
+                            📄 {conflict.location_b.document_title}
                         </div>
                         <div style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
                             Section: {conflict.location_b.section_title}

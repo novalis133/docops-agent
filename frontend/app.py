@@ -1391,22 +1391,24 @@ def render_reports():
                     # Get raw data for Excel
                     issues = staleness.check_all_documents()
                     report_data = [{
-                        "Document": i.get("document_title", ""),
-                        "Issue": i.get("issue_type", ""),
-                        "Details": i.get("details", ""),
-                        "Last Updated": i.get("last_updated", "")
+                        "Document": i.document_title,
+                        "Issue Type": i.staleness_type.value,
+                        "Severity": i.severity.value,
+                        "Description": i.description,
+                        "Stale Reference": i.stale_reference
                     } for i in issues]
 
                 elif report_type == "Coverage Gap Analysis":
                     report_content = generator.generate_gap_report(
                         include_recommendations=include_recommendations
                     )
-                    gaps = gap_analyzer.analyze_all_gaps()
+                    gaps = gap_analyzer.analyze_all()
                     report_data = [{
-                        "Topic": g.get("topic", ""),
-                        "Gap Type": g.get("gap_type", ""),
-                        "Covered In": ", ".join(g.get("covered_in", [])),
-                        "Missing From": ", ".join(g.get("missing_from", []))
+                        "Topic": g.topic,
+                        "Gap Type": g.gap_type.value,
+                        "Severity": g.severity.value,
+                        "Covered In": ", ".join(g.covered_in),
+                        "Missing From": ", ".join(g.missing_from)
                     } for g in gaps]
 
                 elif report_type == "Compliance Audit":

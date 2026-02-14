@@ -168,4 +168,4 @@ secrets/
 *.avi
 *.webm
 *.mp3
-video_pipeline/output/
+video_pipeline/

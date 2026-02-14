@@ -183,7 +183,7 @@ Initial regex-based detection had 40% false positives. We added a **Reviewer Age
 ## Links
 
 - **GitHub:** https://github.com/novalis133/docops-agent
-- **Demo Video:** [VIDEO_URL]
+- **Demo Video:** https://youtu.be/bPwG29ES9uM
 - **Live Demo:** [DEMO_URL] *(optional)*
 - **Social Post:** [SOCIAL_POST_URL] *(tag @elastic_devs)*
 

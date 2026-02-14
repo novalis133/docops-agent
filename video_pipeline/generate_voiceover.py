@@ -16,57 +16,73 @@ DURATION_PATH = OUTPUT_DIR / "voiceover_duration.txt"
 VOICE = "en-US-GuyNeural"
 RATE = "-5%"  # Slightly slower for clarity
 
-# Voiceover script (approximately 3 minutes at 150 words/minute)
+# Voiceover script matching the demo video flow
 SCRIPT = """
-Your company has a problem you don't even know about.
+Welcome to DocOps Agent — AI-powered document analysis with multi-step reasoning.
 
-Your Employee Handbook says passwords need twelve characters. Your Security Policy says fourteen.
+The platform detects three types of issues: Conflict Detection finds contradictions between documents. Staleness Analysis identifies outdated content. Coverage Gaps discovers inconsistent topic coverage.
 
-Which one is right? Until today, you'd never know.
+Here's how it works in four simple steps. Upload your documents. Ask the AI agent questions. View conflicts side by side. Export reports and resolve issues.
 
-Introducing DocOps Agent.
+Let's see it in action. I'll load our demo corpus — twenty-five enterprise policy documents.
 
-This isn't a chatbot. This is an intelligent agent that thinks.
+The dashboard immediately shows the health of our document ecosystem.
 
-Watch. I click one button, and DocOps launches a multi-step analysis.
+Twenty-five documents indexed. One hundred ninety-seven searchable chunks. Sixty-one open alerts. All critical severity.
 
-First, it searches your entire document corpus using hybrid search, combining keyword matching with semantic understanding.
+Look at the impact comparison. Manual audit takes around fifty hours. DocOps Agent? Just one minute. That's ninety-nine point nine percent time saved. Sixty-one issues automatically detected.
 
-Then it compares related sections across documents, looking for conflicts that simple pattern-matching would miss.
+The health score is zero out of one hundred — critical status. The pie chart shows seventy-seven percent are conflicts, twenty percent are coverage gaps, and three percent are staleness issues.
 
-Five tools. One agent. Zero manual work.
+Now let's look at the Document Analytics — powered by Elasticsearch aggregations. Top document sections by chunk count. A treemap showing document sizes. The agent is running a staleness audit in the background.
 
-Here's what it found. Twenty-three issues across fifty documents. In under two minutes.
+Here are the detected alerts. Every single one flagged as critical. Numeric conflicts about password requirements. Duration mismatches. All discovered automatically by the agent.
 
-Look at this conflict. The Remote Work Policy says employees can work from anywhere. But the Data Security Policy requires customer data work on approved networks only.
+This is the Agent Chat. Watch how it reasons through the conflicts.
 
-A remote employee handling customer data would violate security policy, but there's no obvious keyword conflict.
+It found a mismatch between Information Security Policy and Security Policy Update. One says sixty days, the other says forty-five days.
 
-DocOps understood the implication. That's semantic conflict detection. No other tool does this.
+But here's what makes DocOps different — it doesn't just find problems. It suggests resolutions. "Both documents have similar authority. Schedule a review meeting to determine the correct value."
 
-Under the hood, this is pure Elasticsearch power.
+Now the Conflict Viewer. We can filter by topic and severity. Sixty-seven critical issues. Four high severity.
 
-Hybrid search combines BM25 keyword matching with dense vector embeddings. Every document is chunked, embedded, and indexed for lightning-fast retrieval.
+Let's examine a specific conflict. Security Policy Update says minimum sixteen characters for passwords. But the Employee Handbook says at least twelve characters.
 
-The agent uses six custom tools, all powered by Elasticsearch queries. Aggregations analyze conflict patterns. Runtime fields calculate staleness dynamically.
+Same topic. Different requirements. This is a critical compliance risk.
 
-This is what Elasticsearch Agent Builder was made for. Multi-step reasoning. Tool orchestration. Real intelligence.
+Click "Get Suggestion" and watch the AI analyze it.
 
-But finding problems is only half the battle.
+Immediate priority. Estimated five minutes to fix. Eighty-five percent confidence.
 
-DocOps generates compliance reports automatically. Conflicts grouped by severity. Staleness analysis. Coverage gaps.
+The suggested change: Update "at least twelve character" to "minimum sixteen character."
 
-Every alert includes remediation suggestions. Not just here's a problem, but here's how to fix it.
+The rationale: Security Policy Update twenty twenty-six is the authoritative source, so the stricter requirement should apply.
 
-And everything is logged for audit trails. Timestamp. Action. Result. Ready for compliance review.
+You can accept the suggestion or dismiss it. Full control with intelligent guidance.
 
-Twenty-three critical issues. Fifty documents analyzed. Two minutes.
+Alert created! The issue is now tracked in our system.
 
-A compliance team would spend weeks doing this manually. And they'd still miss the semantic conflicts.
+The Alert Lifecycle page tracks resolution status. Open alerts, pending verification, resolved. Every action logged with timestamps for audit compliance.
 
-DocOps Agent. Built with Elasticsearch Agent Builder. Intelligent document operations for the enterprise.
+Now the Search page. Hybrid search combining BM25 keyword matching with semantic vectors.
 
-Find conflicts. Fix compliance. Sleep better.
+Search for "password" — ten results instantly. Relevance scores shown. Keywords highlighted. Export to Excel with one click.
+
+This is Elasticsearch hybrid search in action.
+
+Finally, Reports. Choose report type — Conflict Analysis or Staleness Report. Select export format. Include recommendations and executive summary. Filter by severity.
+
+Generate the report. Found eight staleness issues.
+
+The recommendations are actionable: Update or retire expired documents. Replace outdated year references. Establish a quarterly review cadence. Add metadata for tracking.
+
+Download as Markdown, Excel, or PDF. Ready for stakeholders.
+
+Twenty-five documents analyzed. Sixty-six issues detected. Conflicts found. Resolutions suggested. Reports generated.
+
+All powered by Elasticsearch Agent Builder.
+
+DocOps Agent. Find conflicts. Fix compliance. Sleep better.
 """
 
 
@@ -77,22 +93,18 @@ async def generate_voiceover():
     print(f"Generating voiceover with voice: {VOICE}")
     print(f"Script length: {len(SCRIPT.split())} words")
 
-    # Create TTS communicate object
     communicate = edge_tts.Communicate(
         text=SCRIPT.strip(),
         voice=VOICE,
         rate=RATE,
     )
 
-    # Save audio file
     print(f"Saving to: {AUDIO_PATH}")
     await communicate.save(str(AUDIO_PATH))
 
-    # Calculate approximate duration (150 words/minute)
     word_count = len(SCRIPT.split())
-    estimated_duration = word_count / 150 * 60  # seconds
+    estimated_duration = word_count / 150 * 60
 
-    # Save duration info
     with open(DURATION_PATH, "w") as f:
         f.write(f"word_count: {word_count}\n")
         f.write(f"estimated_duration_seconds: {estimated_duration:.1f}\n")

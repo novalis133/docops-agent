@@ -4,6 +4,8 @@
 
 > Built for the Elasticsearch Agent Builder Hackathon 2026
 
+[![Demo Video](https://img.shields.io/badge/Demo-YouTube-red)](https://youtu.be/bPwG29ES9uM)
+
 ---
 
 ## What is DocOps Agent?
